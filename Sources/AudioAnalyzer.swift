@@ -15,6 +15,7 @@ final class AudioAnalyzer {
     private let fftSetup: FFTSetup
     private let melFilterbank: [Float]
     private let melFilterRows = 26
+    private let dctSize = 32
     private let mfccCount = 13
     private let dct: vDSP.DCT
 
@@ -63,7 +64,7 @@ final class AudioAnalyzer {
             highFreq: 8000.0
         )
 
-        dct = vDSP.DCT(count: 26, transformType: .II)!
+        dct = vDSP.DCT(count: dctSize, transformType: .II)!
 
         previousMagnitudes = [Float](repeating: 0, count: fftSize / 2 + 1)
         previousMFCC = [Float](repeating: 0, count: 13)
@@ -207,9 +208,10 @@ final class AudioAnalyzer {
         )
 
         let epsilon: Float = 1e-10
-        let logMel = melEnergies.map { logf(max($0, epsilon)) }
+        var logMel = melEnergies.map { logf(max($0, epsilon)) }
+        logMel.append(contentsOf: [Float](repeating: 0, count: dctSize - melFilterRows))
 
-        var dctOutput = [Float](repeating: 0, count: melFilterRows)
+        var dctOutput = [Float](repeating: 0, count: dctSize)
         dct.transform(logMel, result: &dctOutput)
 
         let mfcc = Array(dctOutput.prefix(mfccCount))
