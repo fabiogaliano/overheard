@@ -1,0 +1,10 @@
+.build/
+Package.resolved
+*.o
+*.d
+*.swiftdeps
+*.dia
+.swiftpm/
+xcuserdata/
+DerivedData/
+.DS_Store
