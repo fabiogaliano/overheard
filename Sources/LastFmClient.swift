@@ -17,14 +17,10 @@ final class LastFmClient {
     private static let retryDelay: UInt64 = 2_000_000_000
 
     init() {
-        guard let key = ProcessInfo.processInfo.environment["LASTFM_API_KEY"], !key.isEmpty else {
-            fatalError("LASTFM_API_KEY environment variable not set")
-        }
-        guard let secret = ProcessInfo.processInfo.environment["LASTFM_API_SECRET"], !secret.isEmpty else {
-            fatalError("LASTFM_API_SECRET environment variable not set")
-        }
-        self.apiKey = key
-        self.apiSecret = secret
+        self.apiKey = ProcessInfo.processInfo.environment["LASTFM_API_KEY"]
+            ?? "4cf8b0679f46df8d758b2561bfe1df74"
+        self.apiSecret = ProcessInfo.processInfo.environment["LASTFM_API_SECRET"]
+            ?? "973e0ce961320c989f83a97bd2bdb132"
     }
 
     // MARK: - Public API

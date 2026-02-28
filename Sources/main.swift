@@ -49,7 +49,7 @@ case "start":
         exit(1)
     }
 
-    nonisolated(unsafe) let controller = ScrobbleController(session: session)
+    let controller = ScrobbleController(session: session)
 
     signal(SIGINT, SIG_IGN)
     signal(SIGTERM, SIG_IGN)
