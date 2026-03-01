@@ -1,6 +1,6 @@
 # /// script
 # requires-python = ">=3.10"
-# dependencies = ["shazamio"]
+# dependencies = ["shazamio", "audioop-lts"]
 # ///
 import asyncio
 import json

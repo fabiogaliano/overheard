@@ -80,10 +80,11 @@ final class MusicRecognizer {
         let process = Process()
         let pipe = Pipe()
 
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["uv", "run", scriptPath, audioPath]
+        let errPipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/Users/f/.local/bin/uv")
+        process.arguments = ["run", scriptPath, audioPath]
         process.standardOutput = pipe
-        process.standardError = FileHandle.nullDevice
+        process.standardError = errPipe
 
         do {
             try process.run()
@@ -94,6 +95,11 @@ final class MusicRecognizer {
 
         return await withCheckedContinuation { continuation in
             process.terminationHandler = { _ in
+                let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+                if let errStr = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !errStr.isEmpty {
+                    logError("recognize.py stderr: \(errStr)")
+                }
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
 
                 guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
