@@ -52,7 +52,13 @@ final class MusicRecognizer {
     }
 
     func recognize() async -> RecognizedTrack? {
-        guard totalFrames >= minFrames else { return nil }
+        let bufferedSeconds = Double(totalFrames) / sampleRate
+        logDebug("recognizer: recognize() called — \(totalFrames) frames (\(String(format: "%.1f", bufferedSeconds))s buffered)")
+
+        guard totalFrames >= minFrames else {
+            logDebug("recognizer: not enough audio (\(String(format: "%.1f", bufferedSeconds))s < \(String(format: "%.0f", minBufferedSeconds))s)")
+            return nil
+        }
 
         guard let concatenated = concatenateBuffers() else { return nil }
 
@@ -73,6 +79,7 @@ final class MusicRecognizer {
             return nil
         }
 
+        logDebug("recognizer: wrote temp WAV to \(tempFile.path)")
         return await runRecognition(audioPath: tempFile.path)
     }
 
@@ -85,6 +92,8 @@ final class MusicRecognizer {
         process.arguments = ["run", scriptPath, audioPath]
         process.standardOutput = pipe
         process.standardError = errPipe
+
+        logDebug("recognizer: running uv run \(scriptPath) \(audioPath)")
 
         do {
             try process.run()
@@ -101,6 +110,10 @@ final class MusicRecognizer {
                     logError("recognize.py stderr: \(errStr)")
                 }
                 let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                if let stdout = String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                   !stdout.isEmpty {
+                    logDebug("recognizer: stdout: \(stdout)")
+                }
 
                 guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       json["match"] as? Bool == true else {

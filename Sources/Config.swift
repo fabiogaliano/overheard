@@ -66,8 +66,16 @@ func readLockPid() -> Int32? {
     return Int32(content.trimmingCharacters(in: .whitespacesAndNewlines))
 }
 
+nonisolated(unsafe) var debugMode = false
+
 func logError(_ message: String) {
     FileHandle.standardError.write(Data("[radio-scrobbler] \(message)\n".utf8))
+}
+
+func logDebug(_ message: String) {
+    guard debugMode else { return }
+    let ts = String(format: "%.3f", Date().timeIntervalSince1970)
+    FileHandle.standardError.write(Data("[debug \(ts)] \(message)\n".utf8))
 }
 
 @discardableResult

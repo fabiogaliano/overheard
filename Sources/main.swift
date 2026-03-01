@@ -1,7 +1,12 @@
 import Foundation
 import Darwin
 
-let args = Array(CommandLine.arguments.dropFirst())
+var args = Array(CommandLine.arguments.dropFirst())
+
+if args.contains("--debug") {
+    debugMode = true
+    args.removeAll { $0 == "--debug" }
+}
 
 if args.isEmpty {
     printUsage()
@@ -95,7 +100,8 @@ func printUsage() {
     print("""
     radio-scrobbler \u{2014} auto-scrobble radio to Last.fm
 
-      login    Authenticate with Last.fm
-      start    Start listening and scrobbling
+      login      Authenticate with Last.fm
+      start      Start listening and scrobbling
+      --debug    Show verbose pipeline diagnostics
     """)
 }

@@ -10,6 +10,7 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
     private var stream: SCStream?
     private var retryCount = 0
     private let maxRetries = 3
+    private var receivedFirstBuffer = false
 
     func start() async throws {
         let content: SCShareableContent
@@ -114,6 +115,11 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
 
         let byteCount = Int(audioBufferList.mBuffers.mDataByteSize)
         memcpy(dstData[0], srcData, byteCount)
+
+        if !receivedFirstBuffer {
+            receivedFirstBuffer = true
+            logDebug("audio: first buffer received — \(Int(asbd.pointee.mSampleRate))Hz, \(asbd.pointee.mChannelsPerFrame)ch, \(frameCount) frames")
+        }
 
         let audioTime = AVAudioTime(sampleTime: 0, atRate: asbd.pointee.mSampleRate)
         onAudioBuffer?(pcmBuffer, audioTime)

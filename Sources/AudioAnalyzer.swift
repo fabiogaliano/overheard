@@ -38,6 +38,8 @@ final class AudioAnalyzer {
     private let silenceThreshold: Float = 0.001
     private var consecutiveSilentFrames = 0
     private let silenceTimeoutFrames = 3000
+    private var lastDebugLogFrame = 0
+    private let debugLogInterval = 54  // ~5s at 44100Hz / 4096 samples per frame
 
     init() {
         halfFFT = fftSize / 2 + 1
@@ -117,6 +119,15 @@ final class AudioAnalyzer {
         hasPreviousFrame = true
 
         frameCounter += 1
+
+        if (frameCounter - lastDebugLogFrame) >= debugLogInterval {
+            lastDebugLogFrame = frameCounter
+            var fluxMean: Float = 0
+            if !fluxBuffer.isEmpty {
+                vDSP_meanv(fluxBuffer, 1, &fluxMean, vDSP_Length(fluxBuffer.count))
+            }
+            logDebug("analyzer: rms=\(String(format: "%.4f", rms)) fluxMean=\(String(format: "%.4f", fluxMean)) silent=\(consecutiveSilentFrames) rolling=\(fluxBuffer.count)/\(rollingCapacity)")
+        }
 
         if frameCounter % evaluationInterval == 0 {
             evaluateTransition(isSilent: isSilent)
@@ -251,9 +262,11 @@ final class AudioAnalyzer {
 
         if fluxSpiked {
             lastFluxSpikeFrame = frameCounter
+            logDebug("analyzer: flux spike at frame \(frameCounter)")
         }
         if mfccSpiked {
             lastMFCCSpikeFrame = frameCounter
+            logDebug("analyzer: mfcc spike at frame \(frameCounter)")
         }
 
         let bothSpikedRecently =
@@ -263,6 +276,7 @@ final class AudioAnalyzer {
 
         if bothSpikedRecently && (frameCounter - lastTransitionFrame) >= debounceFrames {
             lastTransitionFrame = frameCounter
+            logDebug("analyzer: transition detected at frame \(frameCounter)")
             onTransitionDetected?()
         }
     }

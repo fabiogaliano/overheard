@@ -58,13 +58,20 @@ final class ScrobbleController {
     }
 
     func requestRecognition(reason: String) {
-        guard !recognitionInFlight else { return }
+        guard !recognitionInFlight else {
+            logDebug("controller: skipping recognition (\(reason)) — already in flight")
+            return
+        }
 
         let elapsed = lastRecognitionTime.duration(to: .now)
-        guard elapsed >= cooldownInterval else { return }
+        guard elapsed >= cooldownInterval else {
+            logDebug("controller: skipping recognition (\(reason)) — cooldown (\(elapsed) < \(cooldownInterval))")
+            return
+        }
 
         recognitionInFlight = true
         lastRecognitionTime = .now
+        logDebug("controller: starting recognition (\(reason))")
 
         Task { [weak self] in
             guard let self else { return }
@@ -73,9 +80,13 @@ final class ScrobbleController {
 
             self.recognitionInFlight = false
 
-            guard let track else { return }
+            guard let track else {
+                logDebug("controller: recognition returned no match")
+                return
+            }
 
             if let current = self.activeSession, current.matchesTrack(track) {
+                logDebug("controller: same track still playing — \(track.artist) - \(track.title)")
                 return
             }
 
@@ -189,6 +200,7 @@ final class ScrobbleController {
         timer.schedule(deadline: .now() + 50, repeating: 50)
         timer.setEventHandler { [weak self] in
             Task { @MainActor [weak self] in
+                logDebug("controller: periodic timer fired")
                 self?.requestRecognition(reason: "periodic")
             }
         }
