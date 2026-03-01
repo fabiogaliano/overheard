@@ -3,8 +3,8 @@ import AVFoundation
 
 final class AudioAnalyzer {
 
-    nonisolated(unsafe) var onTransitionDetected: (() -> Void)?
-    nonisolated(unsafe) var onSilenceTimeout: (() -> Void)?
+    nonisolated(unsafe) var onTransitionDetected: (@Sendable () -> Void)?
+    nonisolated(unsafe) var onSilenceTimeout: (@Sendable () -> Void)?
 
     private let fftSize = 4096
     private let sampleRate: Float = 44100.0

@@ -33,13 +33,13 @@ final class ScrobbleController {
             recognizerRef.addBuffer(buffer)
         }
 
-        analyzer.onTransitionDetected = { [weak self] in
+        analyzer.onTransitionDetected = { @Sendable [weak self] in
             Task { @MainActor [weak self] in
                 self?.requestRecognition(reason: "transition")
             }
         }
 
-        analyzer.onSilenceTimeout = { [weak self] in
+        analyzer.onSilenceTimeout = { @Sendable [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 self.scrobbleCurrentTrack()
