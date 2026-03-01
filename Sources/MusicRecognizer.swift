@@ -88,8 +88,8 @@ final class MusicRecognizer {
         let pipe = Pipe()
 
         let errPipe = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/Users/f/.local/bin/uv")
-        process.arguments = ["run", scriptPath, audioPath]
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["uv", "run", scriptPath, audioPath]
         process.standardOutput = pipe
         process.standardError = errPipe
 

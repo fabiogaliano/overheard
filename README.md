@@ -38,6 +38,16 @@ AudioAnalyzer                  MusicRecognizer
 
 ## Getting Started
 
+### Install uv
+
+[uv](https://docs.astral.sh/uv/getting-started/installation/) is used to run the Python recognition script without managing a virtualenv.
+
+```bash
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
+
+### Build
+
 ```bash
 git clone <repo>
 cd anyradio-scrobbler
