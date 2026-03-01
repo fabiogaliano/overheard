@@ -1,5 +1,5 @@
-import ShazamKit
 import AVFoundation
+import Foundation
 
 struct RecognizedTrack: Sendable {
     let title: String
@@ -18,12 +18,25 @@ final class MusicRecognizer {
     private let sampleRate: Double = 44100
     private let maxBufferedSeconds: Double = 10
     private let minBufferedSeconds: Double = 5
+    private let scriptPath: String
 
     private var ringBuffer: [BufferEntry] = []
     private var totalFrames: Int = 0
 
     private var maxFrames: Int { Int(maxBufferedSeconds * sampleRate) }
     private var minFrames: Int { Int(minBufferedSeconds * sampleRate) }
+
+    init() {
+        let bundle = Bundle.main.bundlePath
+        let dir = URL(fileURLWithPath: bundle).deletingLastPathComponent()
+            .deletingLastPathComponent().deletingLastPathComponent().path
+        let candidate = dir + "/recognize.py"
+        if FileManager.default.fileExists(atPath: candidate) {
+            scriptPath = candidate
+        } else {
+            scriptPath = FileManager.default.currentDirectoryPath + "/recognize.py"
+        }
+    }
 
     func addBuffer(_ buffer: AVAudioPCMBuffer) {
         let frames = Int(buffer.frameLength)
@@ -43,54 +56,70 @@ final class MusicRecognizer {
 
         guard let concatenated = concatenateBuffers() else { return nil }
 
-        let generator = SHSignatureGenerator()
+        let tempFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("radio-scrobbler-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: tempFile) }
+
         do {
-            try generator.append(concatenated, at: nil)
+            let audioFile = try AVAudioFile(
+                forWriting: tempFile,
+                settings: concatenated.format.settings,
+                commonFormat: .pcmFormatFloat32,
+                interleaved: false
+            )
+            try audioFile.write(from: concatenated)
         } catch {
-            logError("Failed to append audio to signature generator: \(error.localizedDescription)")
+            logError("Failed to write temp audio: \(error.localizedDescription)")
             return nil
         }
 
-        let signature = generator.signature()
-        let session = SHSession()
+        return await runRecognition(audioPath: tempFile.path)
+    }
 
-        let result = await session.result(from: signature)
+    private func runRecognition(audioPath: String) async -> RecognizedTrack? {
+        let process = Process()
+        let pipe = Pipe()
 
-        switch result {
-        case .match(let match):
-            guard let item = match.mediaItems.first else { return nil }
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["uv", "run", scriptPath, audioPath]
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
 
-            let title = (item.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            let artist = (item.artist ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            try process.run()
+        } catch {
+            logError("Failed to run recognition: \(error.localizedDescription)")
+            return nil
+        }
 
-            guard !title.isEmpty, !artist.isEmpty else { return nil }
+        return await withCheckedContinuation { continuation in
+            process.terminationHandler = { _ in
+                let data = pipe.fileHandleForReading.readDataToEndOfFile()
 
-            let album = item.subtitle?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let cleanAlbum = (album?.isEmpty == true) ? nil : album
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      json["match"] as? Bool == true else {
+                    continuation.resume(returning: nil)
+                    return
+                }
 
-            let duration: TimeInterval? = if let raw = item[.timeRanges] as? [Range<TimeInterval>],
-                                             let range = raw.last {
-                range.upperBound
-            } else {
-                nil
+                let title = (json["title"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let artist = (json["artist"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+
+                guard !title.isEmpty, !artist.isEmpty else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+
+                let album = json["album"] as? String
+                let cleanAlbum = (album?.isEmpty == true) ? nil : album
+
+                continuation.resume(returning: RecognizedTrack(
+                    title: title,
+                    artist: artist,
+                    album: cleanAlbum,
+                    duration: nil
+                ))
             }
-
-            return RecognizedTrack(
-                title: title,
-                artist: artist,
-                album: cleanAlbum,
-                duration: duration
-            )
-
-        case .noMatch:
-            return nil
-
-        case .error(let error, _):
-            logError("Shazam recognition error: \(error.localizedDescription)")
-            return nil
-
-        @unknown default:
-            return nil
         }
     }
 

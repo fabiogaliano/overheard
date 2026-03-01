@@ -10,7 +10,6 @@ let package = Package(
             path: "Sources",
             linkerSettings: [
                 .linkedFramework("ScreenCaptureKit"),
-                .linkedFramework("ShazamKit"),
             ]
         )
     ]
