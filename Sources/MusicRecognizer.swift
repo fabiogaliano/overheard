@@ -19,7 +19,9 @@ final class MusicRecognizer {
     private let maxBufferedSeconds: Double = 10
     private let minBufferedSeconds: Double = 5
     private let scriptPath: String
+    private let recognitionTimeout: TimeInterval = 20
 
+    private let bufferQueue = DispatchQueue(label: "radio-scrobbler.recognizer-buffer")
     private var ringBuffer: [BufferEntry] = []
     private var totalFrames: Int = 0
 
@@ -42,25 +44,31 @@ final class MusicRecognizer {
         let frames = Int(buffer.frameLength)
         guard frames > 0 else { return }
 
-        ringBuffer.append(BufferEntry(buffer: buffer, frameCount: frames))
-        totalFrames += frames
+        bufferQueue.sync {
+            ringBuffer.append(BufferEntry(buffer: buffer, frameCount: frames))
+            totalFrames += frames
 
-        while totalFrames > maxFrames, !ringBuffer.isEmpty {
-            let removed = ringBuffer.removeFirst()
-            totalFrames -= removed.frameCount
+            while totalFrames > maxFrames, !ringBuffer.isEmpty {
+                let removed = ringBuffer.removeFirst()
+                totalFrames -= removed.frameCount
+            }
         }
     }
 
     func recognize() async -> RecognizedTrack? {
-        let bufferedSeconds = Double(totalFrames) / sampleRate
-        logDebug("recognizer: recognize() called — \(totalFrames) frames (\(String(format: "%.1f", bufferedSeconds))s buffered)")
+        let snapshot: (entries: [BufferEntry], totalFrames: Int) = bufferQueue.sync {
+            (entries: ringBuffer, totalFrames: totalFrames)
+        }
 
-        guard totalFrames >= minFrames else {
+        let bufferedSeconds = Double(snapshot.totalFrames) / sampleRate
+        logDebug("recognizer: recognize() called — \(snapshot.totalFrames) frames (\(String(format: "%.1f", bufferedSeconds))s buffered)")
+
+        guard snapshot.totalFrames >= minFrames else {
             logDebug("recognizer: not enough audio (\(String(format: "%.1f", bufferedSeconds))s < \(String(format: "%.0f", minBufferedSeconds))s)")
             return nil
         }
 
-        guard let concatenated = concatenateBuffers() else { return nil }
+        guard let concatenated = concatenateBuffers(entries: snapshot.entries, totalFrames: snapshot.totalFrames) else { return nil }
 
         let tempFile = FileManager.default.temporaryDirectory
             .appendingPathComponent("radio-scrobbler-\(UUID().uuidString).wav")
@@ -86,8 +94,8 @@ final class MusicRecognizer {
     private func runRecognition(audioPath: String) async -> RecognizedTrack? {
         let process = Process()
         let pipe = Pipe()
-
         let errPipe = Pipe()
+
         process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
         process.arguments = ["uv", "run", scriptPath, audioPath]
         process.standardOutput = pipe
@@ -95,14 +103,11 @@ final class MusicRecognizer {
 
         logDebug("recognizer: running uv run \(scriptPath) \(audioPath)")
 
-        do {
-            try process.run()
-        } catch {
-            logError("Failed to run recognition: \(error.localizedDescription)")
-            return nil
-        }
+        let timeout = recognitionTimeout
 
         return await withCheckedContinuation { continuation in
+            let gate = ResumeGate(continuation: continuation)
+
             process.terminationHandler = { _ in
                 let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
                 if let errStr = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -117,7 +122,7 @@ final class MusicRecognizer {
 
                 guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       json["match"] as? Bool == true else {
-                    continuation.resume(returning: nil)
+                    gate.resume(with: nil)
                     return
                 }
 
@@ -125,27 +130,60 @@ final class MusicRecognizer {
                 let artist = (json["artist"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
 
                 guard !title.isEmpty, !artist.isEmpty else {
-                    continuation.resume(returning: nil)
+                    gate.resume(with: nil)
                     return
                 }
 
                 let album = json["album"] as? String
                 let cleanAlbum = (album?.isEmpty == true) ? nil : album
 
-                continuation.resume(returning: RecognizedTrack(
+                gate.resume(with: RecognizedTrack(
                     title: title,
                     artist: artist,
                     album: cleanAlbum,
                     duration: nil
                 ))
             }
+
+            do {
+                try process.run()
+            } catch {
+                logError("Failed to run recognition: \(error.localizedDescription)")
+                gate.resume(with: nil)
+                return
+            }
+
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
+                guard process.isRunning else { return }
+                logError("Recognition timed out after \(Int(timeout))s, terminating")
+                process.terminate()
+                gate.resume(with: nil)
+            }
         }
     }
 
-    private func concatenateBuffers() -> AVAudioPCMBuffer? {
-        guard !ringBuffer.isEmpty else { return nil }
+    private final class ResumeGate<T: Sendable>: @unchecked Sendable {
+        private let queue = DispatchQueue(label: "radio-scrobbler.resume-gate")
+        private var resumed = false
+        private let continuation: CheckedContinuation<T, Never>
 
-        guard let firstFormat = ringBuffer.first?.buffer.format else { return nil }
+        init(continuation: CheckedContinuation<T, Never>) {
+            self.continuation = continuation
+        }
+
+        func resume(with value: T) {
+            queue.sync {
+                guard !resumed else { return }
+                resumed = true
+                continuation.resume(returning: value)
+            }
+        }
+    }
+
+    private func concatenateBuffers(entries: [BufferEntry], totalFrames: Int) -> AVAudioPCMBuffer? {
+        guard !entries.isEmpty else { return nil }
+
+        guard let firstFormat = entries.first?.buffer.format else { return nil }
 
         let capacity = AVAudioFrameCount(totalFrames)
         guard let output = AVAudioPCMBuffer(pcmFormat: firstFormat, frameCapacity: capacity) else {
@@ -156,7 +194,7 @@ final class MusicRecognizer {
         let channelCount = Int(firstFormat.channelCount)
         var offset = 0
 
-        for entry in ringBuffer {
+        for entry in entries {
             guard let srcChannels = entry.buffer.floatChannelData else { continue }
             let frames = entry.frameCount
 
