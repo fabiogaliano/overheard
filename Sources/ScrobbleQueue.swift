@@ -11,6 +11,7 @@ struct QueuedScrobble: Codable, Sendable {
 final class ScrobbleQueue {
 
     private let filePath: URL
+    private var processingPath: URL { filePath.appendingPathExtension("processing") }
     private let encoder = JSONEncoder()
     private let decoder = JSONDecoder()
     private static let maxEntries = 5000
@@ -50,10 +51,24 @@ final class ScrobbleQueue {
 
     func flush() -> [QueuedScrobble] {
         let fm = FileManager.default
-        guard fm.fileExists(atPath: filePath.path) else { return [] }
 
-        guard let contents = try? String(contentsOf: filePath, encoding: .utf8) else {
-            logError("Failed to read queue file")
+        let source: URL
+        if fm.fileExists(atPath: processingPath.path) {
+            source = processingPath
+        } else if fm.fileExists(atPath: filePath.path) {
+            do {
+                try fm.moveItem(at: filePath, to: processingPath)
+            } catch {
+                logError("Failed to move queue to processing: \(error.localizedDescription)")
+                return []
+            }
+            source = processingPath
+        } else {
+            return []
+        }
+
+        guard let contents = try? String(contentsOf: source, encoding: .utf8) else {
+            logError("Failed to read processing queue file")
             return []
         }
 
@@ -72,13 +87,40 @@ final class ScrobbleQueue {
             }
         }
 
-        try? fm.removeItem(at: filePath)
-
         if entries.count > Self.maxEntries {
             entries = Array(entries.suffix(Self.maxEntries))
         }
 
         return entries
+    }
+
+    func completeFlush() {
+        try? FileManager.default.removeItem(at: processingPath)
+    }
+
+    func abortFlush(_ remaining: [QueuedScrobble]) {
+        var lines: [String] = []
+
+        for entry in remaining {
+            if let data = try? encoder.encode(entry),
+               let line = String(data: data, encoding: .utf8) {
+                lines.append(line)
+            }
+        }
+
+        if FileManager.default.fileExists(atPath: filePath.path),
+           let current = try? String(contentsOf: filePath, encoding: .utf8) {
+            let currentLines = current.components(separatedBy: "\n")
+                .filter { !$0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            lines.append(contentsOf: currentLines)
+        }
+
+        if !lines.isEmpty {
+            let content = lines.joined(separator: "\n") + "\n"
+            try? Data(content.utf8).write(to: filePath, options: .atomic)
+        }
+
+        try? FileManager.default.removeItem(at: processingPath)
     }
 
     var count: Int {

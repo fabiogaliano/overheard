@@ -51,7 +51,7 @@ final class ScrobbleController {
     }
 
     func start() async throws {
-        flushQueue()
+        await flushQueue()
         try await capture.start()
         startPeriodicTimer()
         print("Listening for music...")
@@ -167,30 +167,30 @@ final class ScrobbleController {
         }
     }
 
-    private func flushQueue() {
+    private func flushQueue() async {
         let entries = queue.flush()
         guard !entries.isEmpty else { return }
 
         print("Flushing \(entries.count) queued scrobble(s)...")
 
-        Task { [weak self] in
-            guard let self else { return }
-            for entry in entries {
-                do {
-                    try await self.lastFm.scrobble(
-                        artist: entry.artist,
-                        track: entry.track,
-                        album: entry.album,
-                        duration: entry.duration,
-                        timestamp: entry.timestamp
-                    )
-                } catch {
-                    self.handleAuthError(error)
-                    self.queue.enqueue(entry)
-                    logError("Failed to flush queued scrobble: \(error)")
-                }
+        for (index, entry) in entries.enumerated() {
+            do {
+                try await lastFm.scrobble(
+                    artist: entry.artist,
+                    track: entry.track,
+                    album: entry.album,
+                    duration: entry.duration,
+                    timestamp: entry.timestamp
+                )
+            } catch {
+                handleAuthError(error)
+                queue.abortFlush(Array(entries[index...]))
+                logError("Failed to flush queued scrobble: \(error)")
+                return
             }
         }
+
+        queue.completeFlush()
     }
 
     // MARK: - Timers
