@@ -63,14 +63,16 @@ case "start":
     let sigtermSource = DispatchSource.makeSignalSource(signal: SIGTERM, queue: .main)
 
     sigintSource.setEventHandler {
-        controller.shutdown()
-        clearLock()
-        exit(0)
+        Task { @MainActor in
+            await controller.shutdown()
+            exit(0)
+        }
     }
     sigtermSource.setEventHandler {
-        controller.shutdown()
-        clearLock()
-        exit(0)
+        Task { @MainActor in
+            await controller.shutdown()
+            exit(0)
+        }
     }
 
     sigintSource.resume()
@@ -81,8 +83,7 @@ case "start":
             try await controller.start()
         } catch {
             logError("Failed to start: \(error)")
-            controller.shutdown()
-            clearLock()
+            await controller.shutdown()
             exit(1)
         }
     }

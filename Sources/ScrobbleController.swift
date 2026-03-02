@@ -16,6 +16,7 @@ final class ScrobbleController {
 
     private var periodicTimer: DispatchSourceTimer?
     private var eligibilityTimer: DispatchSourceTimer?
+    private var shutdownTask: Task<Void, Never>?
 
     init(session: Session) {
         lastFm = LastFmClient()
@@ -42,9 +43,8 @@ final class ScrobbleController {
         analyzer.onSilenceTimeout = { @Sendable [weak self] in
             Task { @MainActor [weak self] in
                 guard let self else { return }
-                self.scrobbleCurrentTrack()
                 print("\u{23F8} silence detected, exiting...")
-                self.shutdown()
+                await self.shutdown()
                 exit(0)
             }
         }
@@ -92,7 +92,7 @@ final class ScrobbleController {
 
             if let current = self.activeSession {
                 if current.isEligible() {
-                    self.scrobbleCurrentTrack()
+                    await self.scrobbleCurrentTrack()
                 }
                 self.cancelEligibilityTimer()
             }
@@ -104,7 +104,7 @@ final class ScrobbleController {
         }
     }
 
-    func scrobbleCurrentTrack() {
+    func scrobbleCurrentTrack() async {
         guard var session = activeSession,
               !session.scrobbled,
               session.isEligible() else {
@@ -123,31 +123,37 @@ final class ScrobbleController {
             timestamp: timestamp
         )
 
-        Task { [weak self] in
-            guard let self else { return }
-            do {
-                try await self.lastFm.scrobble(
-                    artist: scrobble.artist,
-                    track: scrobble.track,
-                    album: scrobble.album,
-                    duration: scrobble.duration,
-                    timestamp: scrobble.timestamp
-                )
-                print("\u{2713} scrobbled")
-            } catch {
-                self.handleAuthError(error)
-                self.queue.enqueue(scrobble)
-                logError("Scrobble failed, queued for retry: \(error)")
-            }
+        do {
+            try await lastFm.scrobble(
+                artist: scrobble.artist,
+                track: scrobble.track,
+                album: scrobble.album,
+                duration: scrobble.duration,
+                timestamp: scrobble.timestamp
+            )
+            print("\u{2713} scrobbled")
+        } catch {
+            queue.enqueue(scrobble)
+            logError("Scrobble failed, queued for retry: \(error)")
+            await handleAuthError(error)
         }
     }
 
-    func shutdown() {
-        cancelPeriodicTimer()
-        cancelEligibilityTimer()
-        scrobbleCurrentTrack()
-        capture.stop()
-        clearLock()
+    func shutdown() async {
+        if let existing = shutdownTask {
+            await existing.value
+            return
+        }
+
+        let task = Task { @MainActor in
+            cancelPeriodicTimer()
+            cancelEligibilityTimer()
+            await scrobbleCurrentTrack()
+            capture.stop()
+            clearLock()
+        }
+        shutdownTask = task
+        await task.value
     }
 
     private func sendNowPlaying(_ track: RecognizedTrack) {
@@ -161,7 +167,7 @@ final class ScrobbleController {
                     duration: track.duration.map { Int($0) }
                 )
             } catch {
-                self.handleAuthError(error)
+                await self.handleAuthError(error)
                 logError("Now playing update failed: \(error)")
             }
         }
@@ -183,7 +189,7 @@ final class ScrobbleController {
                     timestamp: entry.timestamp
                 )
             } catch {
-                handleAuthError(error)
+                await handleAuthError(error)
                 queue.abortFlush(Array(entries[index...]))
                 logError("Failed to flush queued scrobble: \(error)")
                 return
@@ -219,7 +225,7 @@ final class ScrobbleController {
         timer.schedule(deadline: .now() + interval)
         timer.setEventHandler { [weak self] in
             Task { @MainActor [weak self] in
-                self?.scrobbleCurrentTrack()
+                await self?.scrobbleCurrentTrack()
             }
         }
         timer.resume()
@@ -236,10 +242,10 @@ final class ScrobbleController {
         eligibilityTimer = nil
     }
 
-    private func handleAuthError(_ error: Error) {
+    private func handleAuthError(_ error: Error) async {
         guard let lfmError = error as? LastFmError, lfmError.code == 9 else { return }
         print("Last.fm session expired. Run 'radio-scrobbler login' to re-authenticate.")
-        shutdown()
+        await shutdown()
         exit(1)
     }
 }
