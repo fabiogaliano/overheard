@@ -21,7 +21,7 @@ final class MusicRecognizer {
     private let scriptPath: String
     private let recognitionTimeout: TimeInterval = 20
 
-    private let bufferQueue = DispatchQueue(label: "radio-scrobbler.recognizer-buffer")
+    private let bufferQueue = DispatchQueue(label: "overheard.recognizer-buffer")
     private var ringBuffer: [BufferEntry] = []
     private var totalFrames: Int = 0
 
@@ -71,7 +71,7 @@ final class MusicRecognizer {
         guard let concatenated = concatenateBuffers(entries: snapshot.entries, totalFrames: snapshot.totalFrames) else { return nil }
 
         let tempFile = FileManager.default.temporaryDirectory
-            .appendingPathComponent("radio-scrobbler-\(UUID().uuidString).wav")
+            .appendingPathComponent("overheard-\(UUID().uuidString).wav")
         defer { try? FileManager.default.removeItem(at: tempFile) }
 
         do {
@@ -163,7 +163,7 @@ final class MusicRecognizer {
     }
 
     private final class ResumeGate<T: Sendable>: @unchecked Sendable {
-        private let queue = DispatchQueue(label: "radio-scrobbler.resume-gate")
+        private let queue = DispatchQueue(label: "overheard.resume-gate")
         private var resumed = false
         private let continuation: CheckedContinuation<T, Never>
 

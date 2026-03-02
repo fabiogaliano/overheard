@@ -2,11 +2,11 @@
 import PackageDescription
 
 let package = Package(
-    name: "radio-scrobbler",
+    name: "overheard",
     platforms: [.macOS(.v14)],
     targets: [
         .executableTarget(
-            name: "radio-scrobbler",
+            name: "overheard",
             path: "Sources",
             linkerSettings: [
                 .linkedFramework("ScreenCaptureKit"),

@@ -1,4 +1,6 @@
-# radio-scrobbler
+# overheard
+
+*passive scrobbler for macOS*
 
 **Auto-scrobble whatever's playing on your Mac.**
 
@@ -50,26 +52,26 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 ```bash
 git clone <repo>
-cd anyradio-scrobbler
+cd overheard
 swift build
 ```
 
 ### Authenticate
 
 ```bash
-radio-scrobbler login
+overheard login
 ```
 
 ### Start Scrobbling
 
 ```bash
-radio-scrobbler start
+overheard start
 ```
 
 ### Debug Mode
 
 ```bash
-radio-scrobbler start --debug
+overheard start --debug
 ```
 
 Surfaces the full pipeline state: audio buffer reception, spectral analysis metrics, recognition attempts, and scrobble decisions.

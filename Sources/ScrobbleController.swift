@@ -244,7 +244,7 @@ final class ScrobbleController {
 
     private func handleAuthError(_ error: Error) async {
         guard let lfmError = error as? LastFmError, lfmError.code == 9 else { return }
-        print("Last.fm session expired. Run 'radio-scrobbler login' to re-authenticate.")
+        print("Last.fm session expired. Run 'overheard login' to re-authenticate.")
         await shutdown()
         exit(1)
     }

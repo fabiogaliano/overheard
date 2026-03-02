@@ -2,7 +2,7 @@ import Foundation
 import Darwin
 
 let configDir = FileManager.default.homeDirectoryForCurrentUser
-    .appendingPathComponent(".config/radio-scrobbler")
+    .appendingPathComponent(".config/overheard")
 let sessionFile = configDir.appendingPathComponent("session.json")
 let queueFile = configDir.appendingPathComponent("queue.jsonl")
 let lockFile = configDir.appendingPathComponent("lock")
@@ -69,7 +69,7 @@ func readLockPid() -> Int32? {
 nonisolated(unsafe) var debugMode = false
 
 func logError(_ message: String) {
-    FileHandle.standardError.write(Data("[radio-scrobbler] \(message)\n".utf8))
+    FileHandle.standardError.write(Data("[overheard] \(message)\n".utf8))
 }
 
 func logDebug(_ message: String) {

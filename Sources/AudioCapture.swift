@@ -6,7 +6,7 @@ final class AudioCapture: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked
 
     nonisolated(unsafe) var onAudioBuffer: (@Sendable (AVAudioPCMBuffer, AVAudioTime) -> Void)?
 
-    private let audioQueue = DispatchQueue(label: "radio-scrobbler.audio-capture", qos: .userInteractive)
+    private let audioQueue = DispatchQueue(label: "overheard.audio-capture", qos: .userInteractive)
     private var stream: SCStream?
     private var retryCount = 0
     private let maxRetries = 3

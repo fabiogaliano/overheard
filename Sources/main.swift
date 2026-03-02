@@ -49,7 +49,7 @@ case "start":
     }
 
     guard let session = loadSession() else {
-        logError("Not logged in. Run 'radio-scrobbler login' first.")
+        logError("Not logged in. Run 'overheard login' first.")
         clearLock()
         exit(1)
     }
@@ -99,7 +99,7 @@ default:
 
 func printUsage() {
     print("""
-    radio-scrobbler \u{2014} auto-scrobble radio to Last.fm
+    overheard \u{2014} auto-scrobble system audio to Last.fm
 
       login      Authenticate with Last.fm
       start      Start listening and scrobbling
