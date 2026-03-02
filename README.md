@@ -108,7 +108,7 @@ recognize.py                 # shazamio fingerprinting script
 | ---------- | -------- | -------------------------------- |
 | Transition | On event | Spectral flux + MFCC spike       |
 | Periodic   | 50s      | Catch missed transitions         |
-| Silence    | ~68s     | Clean exit when nothing's playing|
+| Silence    | ~279s    | Clean exit when nothing's playing|
 
 ## License
 
