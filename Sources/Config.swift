@@ -67,6 +67,7 @@ func readLockPid() -> Int32? {
 }
 
 nonisolated(unsafe) var debugMode = false
+nonisolated(unsafe) var autoExitMinutes: Double? = 4.65
 
 func logError(_ message: String) {
     FileHandle.standardError.write(Data("[overheard] \(message)\n".utf8))

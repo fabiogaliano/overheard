@@ -8,6 +8,20 @@ if args.contains("--debug") {
     args.removeAll { $0 == "--debug" }
 }
 
+if args.contains("--no-auto-exit") {
+    autoExitMinutes = nil
+    args.removeAll { $0 == "--no-auto-exit" }
+}
+
+if let idx = args.firstIndex(of: "--auto-exit"), idx + 1 < args.count {
+    guard let minutes = Double(args[idx + 1]), minutes > 0 else {
+        logError("--auto-exit requires a positive number (minutes)")
+        exit(1)
+    }
+    autoExitMinutes = minutes
+    args.removeSubrange(idx...idx + 1)
+}
+
 if args.isEmpty {
     printUsage()
     exit(0)
@@ -101,8 +115,10 @@ func printUsage() {
     print("""
     overheard \u{2014} auto-scrobble system audio to Last.fm
 
-      login      Authenticate with Last.fm
-      start      Start listening and scrobbling
-      --debug    Show verbose pipeline diagnostics
+      login                  Authenticate with Last.fm
+      start                  Start listening and scrobbling
+      --debug                Show verbose pipeline diagnostics
+      --no-auto-exit         Disable silence auto-exit
+      --auto-exit <minutes>  Set silence timeout (default: 4.65)
     """)
 }

@@ -48,12 +48,32 @@ AudioAnalyzer                  MusicRecognizer
 curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-### Build
+### Install
 
 ```bash
-git clone <repo>
+git clone https://github.com/fabiogaliano/overheard.git
 cd overheard
-swift build
+make install
+```
+
+This builds a release binary and installs it to `/usr/local/bin`. To install elsewhere:
+
+```bash
+make install PREFIX=~/.local
+```
+
+### Update
+
+```bash
+cd overheard
+git pull
+make install
+```
+
+### Uninstall
+
+```bash
+make uninstall
 ```
 
 ### Authenticate
@@ -75,6 +95,20 @@ overheard start --debug
 ```
 
 Surfaces the full pipeline state: audio buffer reception, spectral analysis metrics, recognition attempts, and scrobble decisions.
+
+### Disable Auto-Exit
+
+By default, overheard exits after ~4.65 minutes of silence. To keep it running indefinitely:
+
+```bash
+overheard start --no-auto-exit
+```
+
+Or set a custom silence timeout (in minutes):
+
+```bash
+overheard start --auto-exit 10
+```
 
 ## Project Structure
 
@@ -110,7 +144,9 @@ recognize.py                 # shazamio fingerprinting script
 | ---------- | -------- | -------------------------------- |
 | Transition | On event | Spectral flux + MFCC spike       |
 | Periodic   | 50s      | Catch missed transitions         |
-| Silence    | ~279s    | Clean exit when nothing's playing|
+| Silence    | ~279s*   | Clean exit when nothing's playing|
+
+\* Configurable via `--auto-exit <minutes>`, or disable with `--no-auto-exit`.
 
 ## License
 

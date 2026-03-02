@@ -37,12 +37,17 @@ final class AudioAnalyzer {
     private let fusionWindowFrames = 30
     private let silenceThreshold: Float = 0.001
     private var consecutiveSilentFrames = 0
-    private let silenceTimeoutFrames = 3000
+    private let silenceTimeoutFrames: Int?
     private var lastDebugLogFrame = 0
     private let debugLogInterval = 54  // ~5s at 44100Hz / 4096 samples per frame
 
-    init() {
+    init(silenceTimeoutSeconds: Double? = 279) {
         halfFFT = fftSize / 2 + 1
+        if let seconds = silenceTimeoutSeconds {
+            silenceTimeoutFrames = Int(seconds * 44100.0 / 4096.0)
+        } else {
+            silenceTimeoutFrames = nil
+        }
         let n = vDSP_Length(log2(Double(fftSize)))
         log2n = n
 
@@ -99,7 +104,7 @@ final class AudioAnalyzer {
 
         if isSilent {
             consecutiveSilentFrames += 1
-            if consecutiveSilentFrames >= silenceTimeoutFrames {
+            if let timeout = silenceTimeoutFrames, consecutiveSilentFrames >= timeout {
                 onSilenceTimeout?()
                 consecutiveSilentFrames = 0
             }

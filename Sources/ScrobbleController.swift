@@ -21,7 +21,8 @@ final class ScrobbleController {
     init(session: Session) {
         lastFm = LastFmClient()
         capture = AudioCapture()
-        analyzer = AudioAnalyzer()
+        let timeoutSeconds = autoExitMinutes.map { $0 * 60 }
+        analyzer = AudioAnalyzer(silenceTimeoutSeconds: timeoutSeconds)
         recognizer = MusicRecognizer()
         queue = ScrobbleQueue()
 
@@ -40,12 +41,14 @@ final class ScrobbleController {
             }
         }
 
-        analyzer.onSilenceTimeout = { @Sendable [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self else { return }
-                print("\u{23F8} silence detected, exiting...")
-                await self.shutdown()
-                exit(0)
+        if autoExitMinutes != nil {
+            analyzer.onSilenceTimeout = { @Sendable [weak self] in
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    print("\u{23F8} silence detected, exiting...")
+                    await self.shutdown()
+                    exit(0)
+                }
             }
         }
     }
