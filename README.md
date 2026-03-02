@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="overheard.webp" alt="overheard" width="200" />
+</p>
+
 # overheard
 
 *passive scrobbler for macOS*
