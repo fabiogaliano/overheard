@@ -17,7 +17,7 @@ final class MusicRecognizer {
 
     private let sampleRate: Double = 44100
     private let maxBufferedSeconds: Double = 10
-    private let minBufferedSeconds: Double = 5
+    private let minBufferedSeconds: Double = 8
     private let scriptPath: String
     private let recognitionTimeout: TimeInterval = 20
 

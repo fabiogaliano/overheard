@@ -17,6 +17,7 @@ final class ScrobbleController {
     private var periodicTimer: DispatchSourceTimer?
     private var eligibilityTimer: DispatchSourceTimer?
     private var shutdownTask: Task<Void, Never>?
+    private var startupTask: Task<Void, Never>?
 
     init(session: Session) {
         lastFm = LastFmClient()
@@ -57,6 +58,7 @@ final class ScrobbleController {
         await flushQueue()
         try await capture.start()
         startPeriodicTimer()
+        scheduleStartupRecognition()
         print("Listening for music...")
     }
 
@@ -149,6 +151,7 @@ final class ScrobbleController {
         }
 
         let task = Task { @MainActor in
+            startupTask?.cancel()
             cancelPeriodicTimer()
             cancelEligibilityTimer()
             await scrobbleCurrentTrack()
@@ -200,6 +203,22 @@ final class ScrobbleController {
         }
 
         queue.completeFlush()
+    }
+
+    // MARK: - Startup
+
+    private func scheduleStartupRecognition() {
+        startupTask = Task {
+            try? await Task.sleep(for: .seconds(10))
+            guard !Task.isCancelled else { return }
+            requestRecognition(reason: "startup")
+
+            try? await Task.sleep(for: .seconds(10))
+            guard !Task.isCancelled else { return }
+            if activeSession == nil {
+                requestRecognition(reason: "startup-retry")
+            }
+        }
     }
 
     // MARK: - Timers
