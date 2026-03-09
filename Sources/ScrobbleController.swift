@@ -120,7 +120,6 @@ final class ScrobbleController {
             }
 
             self.activeSession = TrackSession(track: track)
-            print("\u{266B} \(track.artist) - \(track.title)")
             self.sendNowPlaying(track)
             self.scheduleEligibilityTimer()
         }
@@ -153,7 +152,7 @@ final class ScrobbleController {
                 duration: scrobble.duration,
                 timestamp: scrobble.timestamp
             )
-            print("\u{2713} scrobbled")
+            print("\u{266B} \(scrobble.artist) - \(scrobble.track)")
         } catch {
             queue.enqueue(scrobble)
             logError("Scrobble failed, queued for retry: \(error)")
