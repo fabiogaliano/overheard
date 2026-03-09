@@ -22,41 +22,7 @@ if let idx = args.firstIndex(of: "--auto-exit"), idx + 1 < args.count {
     args.removeSubrange(idx...idx + 1)
 }
 
-if args.isEmpty {
-    printUsage()
-    exit(0)
-}
-
-switch args[0].lowercased() {
-case "login":
-    print("Last.fm username: ", terminator: "")
-    guard let username = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines),
-          !username.isEmpty else {
-        logError("No username provided")
-        exit(1)
-    }
-
-    guard let rawPassword = getpass("Password: ") else {
-        logError("Failed to read password")
-        exit(1)
-    }
-    let password = String(cString: rawPassword)
-
-    let client = LastFmClient()
-    Task {
-        do {
-            let session = try await client.authenticate(username: username, password: password)
-            saveSession(session)
-            print("\u{2713} Logged in as \(session.username)")
-            exit(0)
-        } catch {
-            logError("Login failed: \(error)")
-            exit(1)
-        }
-    }
-    RunLoop.main.run()
-
-case "start":
+@MainActor func runStart() {
     guard acquireLock() else {
         logError("Already running (another instance holds the lock)")
         exit(1)
@@ -102,6 +68,52 @@ case "start":
         }
     }
     RunLoop.main.run()
+}
+
+func runLogin() {
+    print("Last.fm username: ", terminator: "")
+    guard let username = readLine()?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !username.isEmpty else {
+        logError("No username provided")
+        exit(1)
+    }
+
+    guard let rawPassword = getpass("Password: ") else {
+        logError("Failed to read password")
+        exit(1)
+    }
+    let password = String(cString: rawPassword)
+
+    let client = LastFmClient()
+    Task {
+        do {
+            let session = try await client.authenticate(username: username, password: password)
+            saveSession(session)
+            print("\u{2713} Logged in as \(session.username)")
+            exit(0)
+        } catch {
+            logError("Login failed: \(error)")
+            exit(1)
+        }
+    }
+    RunLoop.main.run()
+}
+
+if args.isEmpty {
+    if loadSession() == nil {
+        runLogin()
+    } else {
+        runStart()
+    }
+    exit(0)
+}
+
+switch args[0].lowercased() {
+case "login":
+    runLogin()
+
+case "start":
+    runStart()
 
 case "-h", "--help", "help":
     printUsage()
@@ -115,8 +127,8 @@ func printUsage() {
     print("""
     overheard \u{2014} auto-scrobble system audio to Last.fm
 
+      (no args)              Login if needed, then start scrobbling
       login                  Authenticate with Last.fm
-      start                  Start listening and scrobbling
       --debug                Show verbose pipeline diagnostics
       --no-auto-exit         Disable silence auto-exit
       --auto-exit <minutes>  Set silence timeout (default: 4.65)

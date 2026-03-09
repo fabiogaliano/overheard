@@ -69,14 +69,23 @@ func readLockPid() -> Int32? {
 nonisolated(unsafe) var debugMode = false
 nonisolated(unsafe) var autoExitMinutes: Double? = 4.65
 
+private func timestamp() -> String {
+    let f = DateFormatter()
+    f.dateFormat = "HH:mm:ss.SSS"
+    return f.string(from: Date())
+}
+
 func logError(_ message: String) {
-    FileHandle.standardError.write(Data("[overheard] \(message)\n".utf8))
+    FileHandle.standardError.write(Data("[\(timestamp())] [overheard] \(message)\n".utf8))
+}
+
+func logInfo(_ message: String) {
+    FileHandle.standardError.write(Data("[\(timestamp())] \(message)\n".utf8))
 }
 
 func logDebug(_ message: String) {
     guard debugMode else { return }
-    let ts = String(format: "%.3f", Date().timeIntervalSince1970)
-    FileHandle.standardError.write(Data("[debug \(ts)] \(message)\n".utf8))
+    FileHandle.standardError.write(Data("[\(timestamp())] [debug] \(message)\n".utf8))
 }
 
 @discardableResult

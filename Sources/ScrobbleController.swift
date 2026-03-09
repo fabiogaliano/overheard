@@ -95,7 +95,7 @@ final class ScrobbleController {
             self.recognitionInFlight = false
 
             guard let track else {
-                logDebug("controller: recognition returned no match (\(reason.rawValue))")
+                logInfo("No match found (\(reason.rawValue))")
                 if reason == .transition {
                     self.scheduleAcceleratedPeriodicRecognition(trigger: "transition-no-match")
                 }

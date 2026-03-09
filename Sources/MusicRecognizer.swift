@@ -40,12 +40,18 @@ final class MusicRecognizer {
     private var maxFrames: Int { Int(maxBufferedSeconds * sampleRate) }
 
     init() {
-        let bundle = Bundle.main.bundlePath
-        let dir = URL(fileURLWithPath: bundle).deletingLastPathComponent()
-            .deletingLastPathComponent().deletingLastPathComponent().path
-        let candidate = dir + "/recognize.py"
-        if FileManager.default.fileExists(atPath: candidate) {
-            scriptPath = candidate
+        let bundleURL = URL(fileURLWithPath: Bundle.main.bundlePath)
+        // Check alongside the installed binary first (e.g. /usr/local/bin/recognize.py)
+        let inBinDir = bundleURL.deletingLastPathComponent().appendingPathComponent("recognize.py").path
+        // Fall back to source-tree root for dev builds (.build/debug/overheard → project root)
+        let inSourceTree = bundleURL
+            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("recognize.py").path
+
+        if FileManager.default.fileExists(atPath: inBinDir) {
+            scriptPath = inBinDir
+        } else if FileManager.default.fileExists(atPath: inSourceTree) {
+            scriptPath = inSourceTree
         } else {
             scriptPath = FileManager.default.currentDirectoryPath + "/recognize.py"
         }

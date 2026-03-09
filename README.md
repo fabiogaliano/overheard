@@ -80,22 +80,22 @@ make install
 make uninstall
 ```
 
-### Authenticate
+### Run
+
+```bash
+overheard
+```
+
+If you haven't logged in yet, it will prompt for your Last.fm credentials first, then start scrobbling. To log in explicitly:
 
 ```bash
 overheard login
 ```
 
-### Start Scrobbling
-
-```bash
-overheard start
-```
-
 ### Debug Mode
 
 ```bash
-overheard start --debug
+overheard --debug
 ```
 
 Surfaces the full pipeline state: audio buffer reception, spectral analysis metrics, recognition attempts, and scrobble decisions.
@@ -105,13 +105,13 @@ Surfaces the full pipeline state: audio buffer reception, spectral analysis metr
 By default, overheard exits after ~4.65 minutes of silence. To keep it running indefinitely:
 
 ```bash
-overheard start --no-auto-exit
+overheard --no-auto-exit
 ```
 
 Or set a custom silence timeout (in minutes):
 
 ```bash
-overheard start --auto-exit 10
+overheard --auto-exit 10
 ```
 
 ## Project Structure
