@@ -4,6 +4,7 @@ import AVFoundation
 final class AudioAnalyzer {
 
     nonisolated(unsafe) var onTransitionDetected: (@Sendable () -> Void)?
+    nonisolated(unsafe) var onSuspicionDetected: (@Sendable () -> Void)?
     nonisolated(unsafe) var onSilenceTimeout: (@Sendable () -> Void)?
 
     private let fftSize = 4096
@@ -33,13 +34,25 @@ final class AudioAnalyzer {
     private var lastFluxSpikeFrame = -1000
     private var lastMFCCSpikeFrame = -1000
     private var lastTransitionFrame = -1000
+    private var lastSuspicionFrame = -1000
     private let debounceFrames = 107
     private let fusionWindowFrames = 30
+    private let suspicionSpikeThreshold = 2
+    private let suspicionCooldownSeconds = 20.0
+    private var suspicionEvidence = 0
+    private let maxSuspicionEvidence = 4
     private let silenceThreshold: Float = 0.001
     private var consecutiveSilentFrames = 0
     private let silenceTimeoutFrames: Int?
     private var lastDebugLogFrame = 0
     private let debugLogInterval = 54  // ~5s at 44100Hz / 4096 samples per frame
+    private var spikeOnlyFluxCount = 0
+    private var spikeOnlyMFCCCount = 0
+    private var suspicionEmitCount = 0
+
+    private var suspicionCooldownFrames: Int {
+        max(1, Int(suspicionCooldownSeconds * Double(sampleRate) / Double(fftSize)))
+    }
 
     init(silenceTimeoutSeconds: Double? = 279) {
         halfFFT = fftSize / 2 + 1
@@ -131,7 +144,12 @@ final class AudioAnalyzer {
             if !fluxBuffer.isEmpty {
                 vDSP_meanv(fluxBuffer, 1, &fluxMean, vDSP_Length(fluxBuffer.count))
             }
-            logDebug("analyzer: rms=\(String(format: "%.4f", rms)) fluxMean=\(String(format: "%.4f", fluxMean)) silent=\(consecutiveSilentFrames) rolling=\(fluxBuffer.count)/\(rollingCapacity)")
+            logDebug(
+                "analyzer: rms=\(String(format: "%.4f", rms)) fluxMean=\(String(format: "%.4f", fluxMean)) " +
+                "silent=\(consecutiveSilentFrames) rolling=\(fluxBuffer.count)/\(rollingCapacity) " +
+                "spikeOnlyFlux=\(spikeOnlyFluxCount) spikeOnlyMFCC=\(spikeOnlyMFCCCount) " +
+                "suspicionEvidence=\(suspicionEvidence) suspicion=\(suspicionEmitCount)"
+            )
         }
 
         if frameCounter % evaluationInterval == 0 {
@@ -281,8 +299,30 @@ final class AudioAnalyzer {
 
         if bothSpikedRecently && (frameCounter - lastTransitionFrame) >= debounceFrames {
             lastTransitionFrame = frameCounter
+            suspicionEvidence = 0
             logDebug("analyzer: transition detected at frame \(frameCounter)")
             onTransitionDetected?()
+            return
+        }
+
+        if fluxSpiked != mfccSpiked {
+            if fluxSpiked {
+                spikeOnlyFluxCount += 1
+            } else {
+                spikeOnlyMFCCCount += 1
+            }
+            suspicionEvidence = min(maxSuspicionEvidence, suspicionEvidence + 1)
+
+            let cooldownElapsed = frameCounter - lastSuspicionFrame
+            if suspicionEvidence >= suspicionSpikeThreshold && cooldownElapsed >= suspicionCooldownFrames {
+                lastSuspicionFrame = frameCounter
+                suspicionEmitCount += 1
+                suspicionEvidence = 0
+                logDebug("analyzer: suspicion detected at frame \(frameCounter)")
+                onSuspicionDetected?()
+            }
+        } else {
+            suspicionEvidence = max(0, suspicionEvidence - 1)
         }
     }
 

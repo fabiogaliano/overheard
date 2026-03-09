@@ -13,8 +13,10 @@ final class ScrobbleController {
     private var recognitionInFlight = false
     private var lastRecognitionTime: ContinuousClock.Instant = .now - .seconds(60)
     private let cooldownInterval: Duration = .seconds(10)
+    private let acceleratedPeriodicDelaySeconds: TimeInterval = 25
 
     private var periodicTimer: DispatchSourceTimer?
+    private var acceleratedPeriodicTimer: DispatchSourceTimer?
     private var eligibilityTimer: DispatchSourceTimer?
     private var shutdownTask: Task<Void, Never>?
     private var startupTask: Task<Void, Never>?
@@ -38,7 +40,14 @@ final class ScrobbleController {
 
         analyzer.onTransitionDetected = { @Sendable [weak self] in
             Task { @MainActor [weak self] in
-                self?.requestRecognition(reason: "transition")
+                self?.requestRecognition(reason: .transition)
+            }
+        }
+
+        analyzer.onSuspicionDetected = { @Sendable [weak self] in
+            Task { @MainActor [weak self] in
+                self?.scheduleAcceleratedPeriodicRecognition(trigger: "suspicion")
+                self?.requestRecognition(reason: .suspicion)
             }
         }
 
@@ -62,38 +71,46 @@ final class ScrobbleController {
         print("Listening for music...")
     }
 
-    func requestRecognition(reason: String) {
+    func requestRecognition(reason: RecognitionReason) {
         guard !recognitionInFlight else {
-            logDebug("controller: skipping recognition (\(reason)) — already in flight")
+            logDebug("controller: skipping recognition (\(reason.rawValue)) — already in flight")
             return
         }
 
         let elapsed = lastRecognitionTime.duration(to: .now)
         guard elapsed >= cooldownInterval else {
-            logDebug("controller: skipping recognition (\(reason)) — cooldown (\(elapsed) < \(cooldownInterval))")
+            logDebug("controller: skipping recognition (\(reason.rawValue)) — cooldown (\(elapsed) < \(cooldownInterval))")
             return
         }
 
         recognitionInFlight = true
         lastRecognitionTime = .now
-        logDebug("controller: starting recognition (\(reason))")
+        logDebug("controller: starting recognition (\(reason.rawValue))")
 
         Task { [weak self] in
             guard let self else { return }
 
-            let track = await self.recognizer.recognize()
+            let track = await self.recognizer.recognize(reason: reason)
 
             self.recognitionInFlight = false
 
             guard let track else {
-                logDebug("controller: recognition returned no match")
+                logDebug("controller: recognition returned no match (\(reason.rawValue))")
+                if reason == .transition {
+                    self.scheduleAcceleratedPeriodicRecognition(trigger: "transition-no-match")
+                }
                 return
             }
 
             if let current = self.activeSession, current.matchesTrack(track) {
-                logDebug("controller: same track still playing — \(track.artist) - \(track.title)")
+                logDebug("controller: same track still playing — \(track.artist) - \(track.title) (\(reason.rawValue))")
+                if reason == .transition || reason == .suspicion {
+                    self.scheduleAcceleratedPeriodicRecognition(trigger: "\(reason.rawValue)-same-track")
+                }
                 return
             }
+
+            self.cancelAcceleratedPeriodicTimer()
 
             if let current = self.activeSession {
                 if current.isEligible() {
@@ -153,6 +170,7 @@ final class ScrobbleController {
         let task = Task { @MainActor in
             startupTask?.cancel()
             cancelPeriodicTimer()
+            cancelAcceleratedPeriodicTimer()
             cancelEligibilityTimer()
             await scrobbleCurrentTrack()
             capture.stop()
@@ -211,12 +229,12 @@ final class ScrobbleController {
         startupTask = Task {
             try? await Task.sleep(for: .seconds(10))
             guard !Task.isCancelled else { return }
-            requestRecognition(reason: "startup")
+            requestRecognition(reason: .startup)
 
             try? await Task.sleep(for: .seconds(10))
             guard !Task.isCancelled else { return }
             if activeSession == nil {
-                requestRecognition(reason: "startup-retry")
+                requestRecognition(reason: .startupRetry)
             }
         }
     }
@@ -229,11 +247,58 @@ final class ScrobbleController {
         timer.setEventHandler { [weak self] in
             Task { @MainActor [weak self] in
                 logDebug("controller: periodic timer fired")
-                self?.requestRecognition(reason: "periodic")
+                self?.requestRecognition(reason: .periodic)
             }
         }
         timer.resume()
         periodicTimer = timer
+    }
+
+    private func scheduleAcceleratedPeriodicRecognition(
+        trigger: String,
+        delaySeconds: TimeInterval? = nil,
+        canRetryOnCooldown: Bool = true
+    ) {
+        guard acceleratedPeriodicTimer == nil else {
+            logDebug("controller: accelerated periodic already scheduled (\(trigger))")
+            return
+        }
+
+        let delay = max(0.1, delaySeconds ?? acceleratedPeriodicDelaySeconds)
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + delay)
+        timer.setEventHandler { [weak self] in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+
+                let elapsed = self.lastRecognitionTime.duration(to: .now)
+                if elapsed < self.cooldownInterval {
+                    self.cancelAcceleratedPeriodicTimer()
+
+                    guard canRetryOnCooldown else {
+                        logDebug("controller: accelerated periodic dropped after cooldown retry (\(elapsed) < \(self.cooldownInterval))")
+                        return
+                    }
+
+                    let remaining = self.cooldownInterval - elapsed
+                    let retryDelay = max(0.5, self.durationSeconds(remaining) + 0.5)
+                    logDebug("controller: accelerated periodic deferred by cooldown (\(elapsed) < \(self.cooldownInterval)); retry in \(String(format: "%.1f", retryDelay))s")
+                    self.scheduleAcceleratedPeriodicRecognition(
+                        trigger: "cooldown-reschedule",
+                        delaySeconds: retryDelay,
+                        canRetryOnCooldown: false
+                    )
+                    return
+                }
+
+                self.cancelAcceleratedPeriodicTimer()
+                logDebug("controller: accelerated periodic timer fired")
+                self.requestRecognition(reason: .acceleratedPeriodic)
+            }
+        }
+        timer.resume()
+        acceleratedPeriodicTimer = timer
+        logDebug("controller: scheduled accelerated periodic in \(String(format: "%.1f", delay))s (\(trigger))")
     }
 
     private func scheduleEligibilityTimer() {
@@ -257,6 +322,15 @@ final class ScrobbleController {
     private func cancelPeriodicTimer() {
         periodicTimer?.cancel()
         periodicTimer = nil
+    }
+
+    private func cancelAcceleratedPeriodicTimer() {
+        acceleratedPeriodicTimer?.cancel()
+        acceleratedPeriodicTimer = nil
+    }
+
+    private func durationSeconds(_ duration: Duration) -> TimeInterval {
+        Double(duration.components.seconds) + Double(duration.components.attoseconds) / 1e18
     }
 
     private func cancelEligibilityTimer() {
