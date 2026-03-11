@@ -2,12 +2,12 @@ import Foundation
 
 @MainActor
 final class ScrobbleController {
-
     nonisolated(unsafe) let lastFm: LastFmClient
     let capture: AudioCapture
     let analyzer: AudioAnalyzer
     nonisolated(unsafe) let recognizer: MusicRecognizer
     let queue: ScrobbleQueue
+    let manualScrobbleServer: ManualScrobbleServer
 
     private var activeSession: TrackSession?
     private var recognitionInFlight = false
@@ -28,6 +28,7 @@ final class ScrobbleController {
         analyzer = AudioAnalyzer(silenceTimeoutSeconds: timeoutSeconds)
         recognizer = MusicRecognizer()
         queue = ScrobbleQueue()
+        manualScrobbleServer = ManualScrobbleServer()
 
         lastFm.sessionKey = session.sessionKey
 
@@ -64,6 +65,11 @@ final class ScrobbleController {
     }
 
     func start() async throws {
+        try manualScrobbleServer.start { [weak self] request in
+            Task { @MainActor [weak self] in
+                await self?.handleManualScrobbleRequest(request)
+            }
+        }
         await flushQueue()
         try await capture.start()
         startPeriodicTimer()
@@ -95,33 +101,73 @@ final class ScrobbleController {
             self.recognitionInFlight = false
 
             guard let track else {
-                logInfo("No match found (\(reason.rawValue))")
+                logNoMatch()
                 if reason == .transition {
                     self.scheduleAcceleratedPeriodicRecognition(trigger: "transition-no-match")
                 }
                 return
             }
 
-            if let current = self.activeSession, current.matchesTrack(track) {
-                logDebug("controller: same track still playing — \(track.artist) - \(track.title) (\(reason.rawValue))")
-                if reason == .transition || reason == .suspicion {
-                    self.scheduleAcceleratedPeriodicRecognition(trigger: "\(reason.rawValue)-same-track")
-                }
-                return
+            await self.handleRecognizedTrack(track, reason: reason)
+        }
+    }
+
+    private func handleRecognizedTrack(_ track: RecognizedTrack, reason: RecognitionReason) async {
+        resetNoMatchStreak()
+
+        if let current = self.activeSession, current.matchesTrack(track) {
+            logDebug("controller: same track still playing — \(track.artist) - \(track.title) (\(reason.rawValue))")
+            if reason == .transition || reason == .suspicion {
+                self.scheduleAcceleratedPeriodicRecognition(trigger: "\(reason.rawValue)-same-track")
             }
+            return
+        }
 
-            self.cancelAcceleratedPeriodicTimer()
+        self.cancelAcceleratedPeriodicTimer()
 
-            if let current = self.activeSession {
-                if current.isEligible() {
-                    await self.scrobbleCurrentTrack()
-                }
-                self.cancelEligibilityTimer()
+        if let current = self.activeSession {
+            if current.isEligible() {
+                await self.scrobbleCurrentTrack()
             }
+            self.cancelEligibilityTimer()
+        }
 
-            self.activeSession = TrackSession(track: track)
-            self.sendNowPlaying(track)
-            self.scheduleEligibilityTimer()
+        self.activeSession = TrackSession(track: track)
+        self.sendNowPlaying(track)
+        self.scheduleEligibilityTimer()
+    }
+
+    private func handleManualScrobbleRequest(_ request: ManualScrobbleRequest) async {
+        let trimmedArtist = request.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedTrack = request.track.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmedArtist.isEmpty, !trimmedTrack.isEmpty else {
+            logError("Ignoring invalid manual scrobble request")
+            return
+        }
+
+        let now = timestamp()
+        let scrobble = QueuedScrobble(
+            artist: trimmedArtist,
+            track: trimmedTrack,
+            album: nil,
+            duration: nil,
+            timestamp: Int(Date().timeIntervalSince1970)
+        )
+
+        do {
+            try await lastFm.scrobble(
+                artist: scrobble.artist,
+                track: scrobble.track,
+                album: scrobble.album,
+                duration: scrobble.duration,
+                timestamp: scrobble.timestamp
+            )
+            print("[\(now)] \u{266B} \(scrobble.artist) - \(scrobble.track)")
+        } catch {
+            queue.enqueue(scrobble)
+            logError("Manual scrobble failed, queued for retry: \(error)")
+            await handleAuthError(error)
         }
     }
 
@@ -135,13 +181,14 @@ final class ScrobbleController {
         session.markScrobbled()
         activeSession = session
 
-        let timestamp = min(session.startTimestamp, Int(Date().timeIntervalSince1970))
+        let now = timestamp()
+        let scrobbleTimestamp = min(session.startTimestamp, Int(Date().timeIntervalSince1970))
         let scrobble = QueuedScrobble(
             artist: session.track.artist,
             track: session.track.title,
             album: session.track.album,
             duration: session.track.duration.map { Int($0) },
-            timestamp: timestamp
+            timestamp: scrobbleTimestamp
         )
 
         do {
@@ -152,7 +199,7 @@ final class ScrobbleController {
                 duration: scrobble.duration,
                 timestamp: scrobble.timestamp
             )
-            print("\u{266B} \(scrobble.artist) - \(scrobble.track)")
+            print("[\(now)] \u{266B} \(scrobble.artist) - \(scrobble.track)")
         } catch {
             queue.enqueue(scrobble)
             logError("Scrobble failed, queued for retry: \(error)")
@@ -173,6 +220,7 @@ final class ScrobbleController {
             cancelEligibilityTimer()
             await scrobbleCurrentTrack()
             capture.stop()
+            manualScrobbleServer.stop()
             clearLock()
         }
         shutdownTask = task

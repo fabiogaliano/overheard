@@ -6,6 +6,7 @@ let configDir = FileManager.default.homeDirectoryForCurrentUser
 let sessionFile = configDir.appendingPathComponent("session.json")
 let queueFile = configDir.appendingPathComponent("queue.jsonl")
 let lockFile = configDir.appendingPathComponent("lock")
+let manualScrobbleSocketFile = configDir.appendingPathComponent("manual.sock")
 
 struct Session: Codable, Sendable {
     let sessionKey: String
@@ -66,17 +67,40 @@ func readLockPid() -> Int32? {
     return Int32(content.trimmingCharacters(in: .whitespacesAndNewlines))
 }
 
+func runningLockPid() -> Int32? {
+    guard let pid = readLockPid() else { return nil }
+    if kill(pid, 0) == 0 {
+        return pid
+    }
+    clearLock()
+    return nil
+}
+
 nonisolated(unsafe) var debugMode = false
 nonisolated(unsafe) var autoExitMinutes: Double? = 4.65
+nonisolated(unsafe) var useAmPm = false
 
-private func timestamp() -> String {
+nonisolated(unsafe) var noMatchCount: Int = 0
+
+func timestamp() -> String {
     let f = DateFormatter()
-    f.dateFormat = "HH:mm:ss.SSS"
+    f.dateFormat = useAmPm ? "h:mm a" : "HH:mm"
     return f.string(from: Date())
 }
 
 func logError(_ message: String) {
     FileHandle.standardError.write(Data("[\(timestamp())] [overheard] \(message)\n".utf8))
+}
+
+func logNoMatch() {
+    noMatchCount += 1
+    if noMatchCount == 1 {
+        FileHandle.standardError.write(Data("[\(timestamp())] not found\n".utf8))
+    }
+}
+
+func resetNoMatchStreak() {
+    noMatchCount = 0
 }
 
 func logInfo(_ message: String) {

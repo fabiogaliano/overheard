@@ -10,7 +10,7 @@
 
 ---
 
-Listens to system audio via ScreenCaptureKit, fingerprints it with Shazam, and scrobbles to Last.fm. No browser extensions, no manual input — just leave it running.
+Listens to system audio via ScreenCaptureKit, fingerprints it with Shazam, and scrobbles to Last.fm. You can also send an immediate manual scrobble to the running instance with `overheard -a "Artist" -s "Song"`.
 
 ## How It Works
 
@@ -97,6 +97,12 @@ If you haven't logged in yet, it will prompt for your Last.fm credentials first,
 
 ```bash
 overheard login
+```
+
+To send an immediate manual scrobble to a running `overheard` instance:
+
+```bash
+overheard -a "Artist" -s "Song"
 ```
 
 ### Debug Mode

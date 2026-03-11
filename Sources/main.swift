@@ -8,6 +8,11 @@ if args.contains("--debug") {
     args.removeAll { $0 == "--debug" }
 }
 
+if args.contains("--ampm") {
+    useAmPm = true
+    args.removeAll { $0 == "--ampm" }
+}
+
 if args.contains("--no-auto-exit") {
     autoExitMinutes = nil
     args.removeAll { $0 == "--no-auto-exit" }
@@ -99,6 +104,27 @@ func runLogin() {
     RunLoop.main.run()
 }
 
+func runManualScrobble(arguments: [String]) {
+    do {
+        let request = try parseManualScrobbleArguments(arguments)
+
+        guard runningLockPid() != nil else {
+            logError("No running overheard instance found. Start overheard first.")
+            exit(1)
+        }
+
+        try sendManualScrobbleRequest(request)
+        print("Sent manual scrobble: \(request.artist) - \(request.track)")
+        exit(0)
+    } catch let error as ManualCLIError {
+        logError(error.message)
+        exit(1)
+    } catch {
+        logError("Failed to send manual scrobble: \(error.localizedDescription)")
+        exit(1)
+    }
+}
+
 if args.isEmpty {
     if loadSession() == nil {
         runLogin()
@@ -106,6 +132,10 @@ if args.isEmpty {
         runStart()
     }
     exit(0)
+}
+
+if args.contains("-a") || args.contains("-s") {
+    runManualScrobble(arguments: args)
 }
 
 switch args[0].lowercased() {
@@ -129,8 +159,68 @@ func printUsage() {
 
       (no args)              Login if needed, then start scrobbling
       login                  Authenticate with Last.fm
+      -a <artist> -s <song>  Send immediate manual scrobble to running instance
       --debug                Show verbose pipeline diagnostics
+      --ampm                 Use 12-hour AM/PM time format
       --no-auto-exit         Disable silence auto-exit
       --auto-exit <minutes>  Set silence timeout (default: 4.65)
     """)
+}
+
+struct ManualCLIError: Error {
+    let message: String
+}
+
+func parseManualScrobbleArguments(_ arguments: [String]) throws -> ManualScrobbleRequest {
+    var artist: String?
+    var track: String?
+    var index = 0
+
+    while index < arguments.count {
+        let argument = arguments[index]
+        switch argument {
+        case "-a":
+            guard artist == nil else {
+                throw ManualCLIError(message: "Artist flag provided more than once")
+            }
+            guard index + 1 < arguments.count else {
+                throw ManualCLIError(message: "Missing value for -a")
+            }
+            artist = arguments[index + 1]
+            index += 2
+
+        case "-s":
+            guard track == nil else {
+                throw ManualCLIError(message: "Song flag provided more than once")
+            }
+            guard index + 1 < arguments.count else {
+                throw ManualCLIError(message: "Missing value for -s")
+            }
+            track = arguments[index + 1]
+            index += 2
+
+        default:
+            throw ManualCLIError(message: "Unknown argument for manual scrobble: \(argument)")
+        }
+    }
+
+    guard let artist else {
+        throw ManualCLIError(message: "Manual scrobble requires -a <artist>")
+    }
+
+    guard let track else {
+        throw ManualCLIError(message: "Manual scrobble requires -s <song>")
+    }
+
+    let trimmedArtist = artist.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedArtist.isEmpty else {
+        throw ManualCLIError(message: "Artist cannot be empty")
+    }
+
+    let trimmedTrack = track.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedTrack.isEmpty else {
+        throw ManualCLIError(message: "Song cannot be empty")
+    }
+
+    return ManualScrobbleRequest(artist: trimmedArtist, track: trimmedTrack)
 }
