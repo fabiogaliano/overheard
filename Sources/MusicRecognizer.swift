@@ -1,4 +1,5 @@
 import AVFoundation
+import Darwin
 import Foundation
 
 struct RecognizedTrack: Sendable {
@@ -135,7 +136,7 @@ final class MusicRecognizer {
 
             process.terminationHandler = { _ in
                 let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
-                if let errStr = String(data: errData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+                if let errStr = Self.filteredRecognitionStderr(from: errData),
                    !errStr.isEmpty {
                     logError("recognize.py stderr: \(errStr)")
                 }
@@ -189,7 +190,7 @@ final class MusicRecognizer {
 
     private static func resolveScriptPath() -> String? {
         let fileManager = FileManager.default
-        let executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let executableURL = resolveExecutableURL()
         let executableDir = executableURL.deletingLastPathComponent()
 
         let inSourceTree: String? = if executableURL.path.contains("/.build/") {
@@ -208,11 +209,79 @@ final class MusicRecognizer {
                 .deletingLastPathComponent()
                 .appendingPathComponent("libexec/overheard/recognize.py").path,
             inSourceTree,
+            resolveScriptPathFromPATH(),
         ]
 
         return candidates
             .compactMap { $0 }
             .first(where: { fileManager.fileExists(atPath: $0) })
+    }
+
+    private static func resolveExecutableURL() -> URL {
+        if let executableURL = Bundle.main.executableURL {
+            return executableURL.resolvingSymlinksInPath()
+        }
+
+        var size: UInt32 = 0
+        _ = _NSGetExecutablePath(nil, &size)
+
+        var buffer = [CChar](repeating: 0, count: Int(size))
+        if _NSGetExecutablePath(&buffer, &size) == 0 {
+            let bytes = buffer.prefix { $0 != 0 }.map { UInt8(bitPattern: $0) }
+            let path = String(decoding: bytes, as: UTF8.self)
+            return URL(fileURLWithPath: path).resolvingSymlinksInPath()
+        }
+
+        let fallbackPath = NSString(string: CommandLine.arguments[0]).expandingTildeInPath
+        return URL(fileURLWithPath: fallbackPath).resolvingSymlinksInPath()
+    }
+
+    private static func resolveScriptPathFromPATH() -> String? {
+        guard let pathValue = ProcessInfo.processInfo.environment["PATH"], !pathValue.isEmpty else {
+            return nil
+        }
+
+        for directory in pathValue.split(separator: ":") {
+            let candidate = URL(fileURLWithPath: String(directory))
+                .appendingPathComponent("recognize.py")
+                .path
+            if FileManager.default.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+
+        return nil
+    }
+
+    private static func filteredRecognitionStderr(from data: Data) -> String? {
+        guard let stderr = String(data: data, encoding: .utf8) else { return nil }
+
+        var filteredLines: [String] = []
+        var skipIndentedWarningLine = false
+
+        for line in stderr.split(whereSeparator: \.isNewline).map(String.init) {
+            if skipIndentedWarningLine, line.hasPrefix("  ") {
+                skipIndentedWarningLine = false
+                continue
+            }
+
+            skipIndentedWarningLine = false
+
+            if line.hasPrefix("Installed "), line.contains(" packages in ") {
+                continue
+            }
+
+            if line.contains("/site-packages/pydub/utils.py:"),
+               line.contains("SyntaxWarning: invalid escape sequence") {
+                skipIndentedWarningLine = true
+                continue
+            }
+
+            filteredLines.append(line)
+        }
+
+        let result = filteredLines.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        return result.isEmpty ? nil : result
     }
 
     private func windowSeconds(for reason: RecognitionReason) -> Double {
