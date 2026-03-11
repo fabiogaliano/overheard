@@ -30,7 +30,7 @@ final class MusicRecognizer {
     private let transitionWindowSeconds: Double = 8
     private let defaultMinBufferedSeconds: Double = 8
     private let transitionMinBufferedSeconds: Double = 6
-    private let scriptPath: String
+    private let scriptPath: String?
     private let recognitionTimeout: TimeInterval = 20
 
     private let bufferQueue = DispatchQueue(label: "overheard.recognizer-buffer")
@@ -40,20 +40,11 @@ final class MusicRecognizer {
     private var maxFrames: Int { Int(maxBufferedSeconds * sampleRate) }
 
     init() {
-        let bundleURL = URL(fileURLWithPath: Bundle.main.bundlePath)
-        // Check alongside the installed binary first (e.g. /usr/local/bin/recognize.py)
-        let inBinDir = bundleURL.deletingLastPathComponent().appendingPathComponent("recognize.py").path
-        // Fall back to source-tree root for dev builds (.build/debug/overheard → project root)
-        let inSourceTree = bundleURL
-            .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-            .appendingPathComponent("recognize.py").path
-
-        if FileManager.default.fileExists(atPath: inBinDir) {
-            scriptPath = inBinDir
-        } else if FileManager.default.fileExists(atPath: inSourceTree) {
-            scriptPath = inSourceTree
+        scriptPath = Self.resolveScriptPath()
+        if let scriptPath {
+            logDebug("recognizer: using script at \(scriptPath)")
         } else {
-            scriptPath = FileManager.default.currentDirectoryPath + "/recognize.py"
+            logError("recognize.py not found in any supported install location")
         }
     }
 
@@ -121,6 +112,11 @@ final class MusicRecognizer {
     }
 
     private func runRecognition(audioPath: String, reason: RecognitionReason) async -> RecognizedTrack? {
+        guard let scriptPath else {
+            logError("Cannot run recognition because recognize.py is missing")
+            return nil
+        }
+
         let process = Process()
         let pipe = Pipe()
         let errPipe = Pipe()
@@ -189,6 +185,34 @@ final class MusicRecognizer {
                 gate.resume(with: nil)
             }
         }
+    }
+
+    private static func resolveScriptPath() -> String? {
+        let fileManager = FileManager.default
+        let executableURL = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
+        let executableDir = executableURL.deletingLastPathComponent()
+
+        let inSourceTree: String? = if executableURL.path.contains("/.build/") {
+            executableDir
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("recognize.py").path
+        } else {
+            nil
+        }
+
+        let candidates: [String?] = [
+            executableDir.appendingPathComponent("recognize.py").path,
+            executableDir
+                .deletingLastPathComponent()
+                .appendingPathComponent("libexec/overheard/recognize.py").path,
+            inSourceTree,
+        ]
+
+        return candidates
+            .compactMap { $0 }
+            .first(where: { fileManager.fileExists(atPath: $0) })
     }
 
     private func windowSeconds(for reason: RecognitionReason) -> Double {

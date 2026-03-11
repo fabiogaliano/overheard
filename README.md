@@ -57,14 +57,21 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 ```bash
 git clone https://github.com/fabiogaliano/overheard.git
 cd overheard
-make install
+sudo make install
 ```
 
-This builds a release binary and installs it to `/usr/local/bin`. To install elsewhere:
+This builds a release binary and installs:
+
+- `overheard` to `/usr/local/bin`
+- `recognize.py` to `/usr/local/libexec/overheard`
+
+If you prefer a user-local install without `sudo`:
 
 ```bash
-make install PREFIX=~/.local
+make install PREFIX="$HOME/.local"
 ```
+
+If you use `~/.local`, ensure `~/.local/bin` is on your `PATH`.
 
 ### Update
 
@@ -77,7 +84,7 @@ make install
 ### Uninstall
 
 ```bash
-make uninstall
+sudo make uninstall
 ```
 
 ### Run

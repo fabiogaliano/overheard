@@ -5,12 +5,13 @@ build:
 
 install: build
 	install -d $(PREFIX)/bin
+	install -d $(PREFIX)/libexec/overheard
 	install .build/release/overheard $(PREFIX)/bin/overheard
-	install recognize.py $(PREFIX)/bin/recognize.py
+	install recognize.py $(PREFIX)/libexec/overheard/recognize.py
 
 uninstall:
 	rm -f $(PREFIX)/bin/overheard
-	rm -f $(PREFIX)/bin/recognize.py
+	rm -f $(PREFIX)/libexec/overheard/recognize.py
 
 clean:
 	swift package clean
