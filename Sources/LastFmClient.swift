@@ -84,6 +84,28 @@ final class LastFmClient {
         if let duration { params["duration[0]"] = String(duration) }
         params["api_sig"] = generateSignature(params)
 
+        try await postWithRetries(params: params)
+    }
+
+    func loveTrack(artist: String, track: String) async throws {
+        guard let sk = sessionKey else {
+            throw LastFmError(code: nil, message: "Not authenticated — no session key")
+        }
+
+        var params: [String: String] = [
+            "method": "track.love",
+            "artist": artist,
+            "track": track,
+            "api_key": apiKey,
+            "sk": sk,
+        ]
+        params["api_sig"] = generateSignature(params)
+
+        try await postWithRetries(params: params)
+    }
+
+    private func postWithRetries(params: [String: String]) async throws {
+
         var lastError: Error?
         for attempt in 0..<Self.maxRetries {
             do {

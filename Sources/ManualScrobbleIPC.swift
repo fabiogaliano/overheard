@@ -1,12 +1,17 @@
 import Darwin
 import Foundation
 
-struct ManualScrobbleRequest: Codable, Sendable {
+struct ManualScrobbleRequest: Codable, Sendable, Equatable {
     let artist: String
     let track: String
 }
 
-enum ManualScrobbleIPCError: LocalizedError {
+enum ControlRequest: Codable, Sendable, Equatable {
+    case manualScrobble(ManualScrobbleRequest)
+    case loveLastScrobbledTrack
+}
+
+enum ControlIPCError: LocalizedError {
     case invalidSocketPath
     case socketCreationFailed(String)
     case bindFailed(String)
@@ -17,7 +22,7 @@ enum ManualScrobbleIPCError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidSocketPath:
-            "Manual scrobble socket path is invalid"
+            "Control socket path is invalid"
         case let .socketCreationFailed(message),
              let .bindFailed(message),
              let .listenFailed(message),
@@ -28,7 +33,7 @@ enum ManualScrobbleIPCError: LocalizedError {
     }
 }
 
-final class ManualScrobbleServer {
+final class ControlRequestServer {
     private let socketURL: URL
     private var socketFD: Int32 = -1
     private var readSource: DispatchSourceRead?
@@ -37,25 +42,25 @@ final class ManualScrobbleServer {
         self.socketURL = socketURL
     }
 
-    func start(onRequest: @escaping @Sendable (ManualScrobbleRequest) -> Void) throws {
+    func start(onRequest: @escaping @Sendable (ControlRequest) -> Void) throws {
         stop()
         ensureConfigDir()
         try? FileManager.default.removeItem(at: socketURL)
 
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else {
-            throw ManualScrobbleIPCError.socketCreationFailed(posixMessage("Failed to create manual scrobble socket"))
+            throw ControlIPCError.socketCreationFailed(posixMessage("Failed to create control socket"))
         }
 
         do {
             try withSocketAddress(for: socketURL.path) { address, length in
                 guard bind(fd, address, length) == 0 else {
-                    throw ManualScrobbleIPCError.bindFailed(posixMessage("Failed to bind manual scrobble socket"))
+                    throw ControlIPCError.bindFailed(posixMessage("Failed to bind control socket"))
                 }
             }
 
             guard listen(fd, 8) == 0 else {
-                throw ManualScrobbleIPCError.listenFailed(posixMessage("Failed to listen on manual scrobble socket"))
+                throw ControlIPCError.listenFailed(posixMessage("Failed to listen on control socket"))
             }
 
             let source = DispatchSource.makeReadSource(fileDescriptor: fd, queue: .global(qos: .utility))
@@ -89,7 +94,7 @@ final class ManualScrobbleServer {
         try? FileManager.default.removeItem(at: socketURL)
     }
 
-    private func acceptNextConnection(onRequest: @escaping @Sendable (ManualScrobbleRequest) -> Void) {
+    private func acceptNextConnection(onRequest: @escaping @Sendable (ControlRequest) -> Void) {
         let clientFD = accept(socketFD, nil, nil)
         guard clientFD >= 0 else { return }
 
@@ -100,24 +105,24 @@ final class ManualScrobbleServer {
         guard !data.isEmpty else { return }
 
         do {
-            let request = try JSONDecoder().decode(ManualScrobbleRequest.self, from: data)
+            let request = try JSONDecoder().decode(ControlRequest.self, from: data)
             onRequest(request)
         } catch {
-            logError("Failed to decode manual scrobble request: \(error.localizedDescription)")
+            logError("Failed to decode control request: \(error.localizedDescription)")
         }
     }
 }
 
-func sendManualScrobbleRequest(_ request: ManualScrobbleRequest, socketURL: URL = manualScrobbleSocketFile) throws {
+func sendControlRequest(_ request: ControlRequest, socketURL: URL = manualScrobbleSocketFile) throws {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else {
-        throw ManualScrobbleIPCError.socketCreationFailed(posixMessage("Failed to create manual scrobble client socket"))
+        throw ControlIPCError.socketCreationFailed(posixMessage("Failed to create control client socket"))
     }
     defer { close(fd) }
 
     try withSocketAddress(for: socketURL.path) { address, length in
         guard connect(fd, address, length) == 0 else {
-            throw ManualScrobbleIPCError.connectFailed(posixMessage("No running overheard instance found"))
+            throw ControlIPCError.connectFailed(posixMessage("No running overheard instance found"))
         }
     }
 
@@ -126,7 +131,7 @@ func sendManualScrobbleRequest(_ request: ManualScrobbleRequest, socketURL: URL 
         write(fd, buffer.baseAddress, buffer.count)
     }
     guard result == data.count else {
-        throw ManualScrobbleIPCError.writeFailed(posixMessage("Failed to send manual scrobble request"))
+        throw ControlIPCError.writeFailed(posixMessage("Failed to send control request"))
     }
 }
 
@@ -141,7 +146,7 @@ private func withSocketAddress<T>(
     let utf8 = path.utf8CString
     let capacity = MemoryLayout.size(ofValue: address.sun_path)
     guard utf8.count <= capacity else {
-        throw ManualScrobbleIPCError.invalidSocketPath
+        throw ControlIPCError.invalidSocketPath
     }
 
     withUnsafeMutablePointer(to: &address.sun_path) { pointer in

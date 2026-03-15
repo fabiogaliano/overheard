@@ -105,6 +105,12 @@ To send an immediate manual scrobble to a running `overheard` instance:
 overheard -a "Artist" -s "Song"
 ```
 
+To love the last track successfully scrobbled by the currently running `overheard` process:
+
+```bash
+overheard -l
+```
+
 ### Debug Mode
 
 ```bash

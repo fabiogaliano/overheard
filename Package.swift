@@ -11,6 +11,10 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("ScreenCaptureKit"),
             ]
+        ),
+        .testTarget(
+            name: "overheardTests",
+            dependencies: ["overheard"]
         )
     ]
 )

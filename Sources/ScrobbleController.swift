@@ -7,9 +7,10 @@ final class ScrobbleController {
     let analyzer: AudioAnalyzer
     nonisolated(unsafe) let recognizer: MusicRecognizer
     let queue: ScrobbleQueue
-    let manualScrobbleServer: ManualScrobbleServer
+    let controlServer: ControlRequestServer
 
     private var activeSession: TrackSession?
+    private var lastScrobbledTrack: ManualScrobbleRequest?
     private var recognitionInFlight = false
     private var lastRecognitionTime: ContinuousClock.Instant = .now - .seconds(60)
     private let cooldownInterval: Duration = .seconds(10)
@@ -28,7 +29,7 @@ final class ScrobbleController {
         analyzer = AudioAnalyzer(silenceTimeoutSeconds: timeoutSeconds)
         recognizer = MusicRecognizer()
         queue = ScrobbleQueue()
-        manualScrobbleServer = ManualScrobbleServer()
+        controlServer = ControlRequestServer()
 
         lastFm.sessionKey = session.sessionKey
 
@@ -65,9 +66,9 @@ final class ScrobbleController {
     }
 
     func start() async throws {
-        try manualScrobbleServer.start { [weak self] request in
+        try controlServer.start { [weak self] request in
             Task { @MainActor [weak self] in
-                await self?.handleManualScrobbleRequest(request)
+                await self?.handleControlRequest(request)
             }
         }
         await flushQueue()
@@ -137,6 +138,15 @@ final class ScrobbleController {
         self.scheduleEligibilityTimer()
     }
 
+    private func handleControlRequest(_ request: ControlRequest) async {
+        switch request {
+        case let .manualScrobble(request):
+            await handleManualScrobbleRequest(request)
+        case .loveLastScrobbledTrack:
+            await loveLastScrobbledTrack()
+        }
+    }
+
     private func handleManualScrobbleRequest(_ request: ManualScrobbleRequest) async {
         let trimmedArtist = request.artist.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedTrack = request.track.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -163,10 +173,28 @@ final class ScrobbleController {
                 duration: scrobble.duration,
                 timestamp: scrobble.timestamp
             )
+            rememberLastScrobbledTrack(artist: scrobble.artist, track: scrobble.track)
             print("[\(now)] \u{266B} \(scrobble.artist) - \(scrobble.track)")
         } catch {
             queue.enqueue(scrobble)
             logError("Manual scrobble failed, queued for retry: \(error)")
+            await handleAuthError(error)
+        }
+    }
+
+    private func loveLastScrobbledTrack() async {
+        guard let lastScrobbledTrack else {
+            logError("No scrobbled track from this running overheard instance is available to love yet.")
+            return
+        }
+
+        let now = timestamp()
+
+        do {
+            try await lastFm.loveTrack(artist: lastScrobbledTrack.artist, track: lastScrobbledTrack.track)
+            print("[\(now)] \u{2665} \(lastScrobbledTrack.artist) - \(lastScrobbledTrack.track)")
+        } catch {
+            logError("Love failed: \(error)")
             await handleAuthError(error)
         }
     }
@@ -199,6 +227,7 @@ final class ScrobbleController {
                 duration: scrobble.duration,
                 timestamp: scrobble.timestamp
             )
+            rememberLastScrobbledTrack(artist: scrobble.artist, track: scrobble.track)
             print("[\(now)] \u{266B} \(scrobble.artist) - \(scrobble.track)")
         } catch {
             queue.enqueue(scrobble)
@@ -220,7 +249,8 @@ final class ScrobbleController {
             cancelEligibilityTimer()
             await scrobbleCurrentTrack()
             capture.stop()
-            manualScrobbleServer.stop()
+            lastScrobbledTrack = nil
+            controlServer.stop()
             clearLock()
         }
         shutdownTask = task
@@ -259,6 +289,7 @@ final class ScrobbleController {
                     duration: entry.duration,
                     timestamp: entry.timestamp
                 )
+                rememberLastScrobbledTrack(artist: entry.artist, track: entry.track)
             } catch {
                 await handleAuthError(error)
                 queue.abortFlush(Array(entries[index...]))
@@ -268,6 +299,10 @@ final class ScrobbleController {
         }
 
         queue.completeFlush()
+    }
+
+    private func rememberLastScrobbledTrack(artist: String, track: String) {
+        lastScrobbledTrack = ManualScrobbleRequest(artist: artist, track: track)
     }
 
     // MARK: - Startup
