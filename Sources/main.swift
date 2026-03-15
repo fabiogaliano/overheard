@@ -3,27 +3,39 @@ import Darwin
 
 var args = Array(CommandLine.arguments.dropFirst())
 
-if args.contains("--debug") {
+if args.contains("--debug") || args.contains("-d") {
     debugMode = true
-    args.removeAll { $0 == "--debug" }
+    args.removeAll { $0 == "--debug" || $0 == "-d" }
 }
 
-if args.contains("--ampm") {
-    useAmPm = true
-    args.removeAll { $0 == "--ampm" }
+if let idx = args.firstIndex(of: "--time-format"), idx + 1 < args.count {
+    switch args[idx + 1] {
+    case "12h":
+        useAmPm = true
+    case "24h":
+        useAmPm = false
+    default:
+        logError("--time-format requires '12h' or '24h'")
+        exit(1)
+    }
+    args.removeSubrange(idx...idx + 1)
 }
 
-if args.contains("--no-auto-exit") {
-    autoExitMinutes = nil
-    args.removeAll { $0 == "--no-auto-exit" }
+if args.contains("--no-scrobble") || args.contains("-n") {
+    noScrobble = true
+    args.removeAll { $0 == "--no-scrobble" || $0 == "-n" }
 }
 
 if let idx = args.firstIndex(of: "--auto-exit"), idx + 1 < args.count {
-    guard let minutes = Double(args[idx + 1]), minutes > 0 else {
-        logError("--auto-exit requires a positive number (minutes)")
+    let value = args[idx + 1]
+    if value == "off" {
+        autoExitMinutes = nil
+    } else if let minutes = Double(value), minutes > 0 {
+        autoExitMinutes = minutes
+    } else {
+        logError("--auto-exit requires a positive number or 'off'")
         exit(1)
     }
-    autoExitMinutes = minutes
     args.removeSubrange(idx...idx + 1)
 }
 
@@ -113,30 +125,46 @@ func runManualScrobble(arguments: [String]) {
             exit(1)
         }
 
-        try sendControlRequest(.manualScrobble(request))
-        print("Sent manual scrobble: \(request.artist) - \(request.track)")
-        exit(0)
+        let response = try sendControlRequest(.manualScrobble(request))
+        print(response.message)
+        exit(response.success ? 0 : 1)
     } catch let error as ManualCLIError {
         logError(error.message)
         exit(1)
     } catch {
-        logError("Failed to send manual scrobble: \(error.localizedDescription)")
+        logError("Failed to send scrobble: \(error.localizedDescription)")
         exit(1)
     }
 }
 
-func runLoveLastScrobbledTrack() {
+func runLove() {
     guard runningLockPid() != nil else {
         logError("No running overheard instance found. Start overheard first.")
         exit(1)
     }
 
     do {
-        try sendControlRequest(.loveLastScrobbledTrack)
-        print("Sent love request")
-        exit(0)
+        let response = try sendControlRequest(.love)
+        print(response.message)
+        exit(response.success ? 0 : 1)
     } catch {
         logError("Failed to send love request: \(error.localizedDescription)")
+        exit(1)
+    }
+}
+
+func runToggleScrobbling() {
+    guard runningLockPid() != nil else {
+        logError("No running overheard instance found. Start overheard first.")
+        exit(1)
+    }
+
+    do {
+        let response = try sendControlRequest(.toggleScrobbling)
+        print(response.message)
+        exit(response.success ? 0 : 1)
+    } catch {
+        logError("Failed to send toggle request: \(error.localizedDescription)")
         exit(1)
     }
 }
@@ -164,8 +192,11 @@ do {
     case .manualScrobble:
         runManualScrobble(arguments: args)
 
-    case .loveLastScrobbledTrack:
-        runLoveLastScrobbledTrack()
+    case .love:
+        runLove()
+
+    case .toggleScrobbling:
+        runToggleScrobbling()
     }
 } catch let error as ManualCLIError {
     logError(error.message)
@@ -182,11 +213,17 @@ func printUsage() {
 
       (no args)              Login if needed, then start scrobbling
       login                  Authenticate with Last.fm
-      -a <artist> -s <song>  Send immediate manual scrobble to running instance
-      -l, --love             Love the last scrobbled track from the running instance
-      --debug                Show verbose pipeline diagnostics
-      --ampm                 Use 12-hour AM/PM time format
-      --no-auto-exit         Disable silence auto-exit
-      --auto-exit <minutes>  Set silence timeout (default: 4.65)
+      start                  Start scrobbling explicitly
+
+    Runtime commands (send to running instance):
+      -a <artist> -s <song>  Send immediate manual scrobble
+      -l, --love             Love the last recognized song
+      -t, --toggle           Toggle scrobbling on/off
+
+    Options:
+      -n, --no-scrobble          Listen-only mode (no scrobbling)
+      -d, --debug                Show verbose pipeline diagnostics
+      --auto-exit <min|off>      Silence timeout (default: 5)
+      --time-format <12h|24h>    Time display format (default: 24h)
     """)
 }

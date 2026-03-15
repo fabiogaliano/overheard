@@ -6,7 +6,7 @@ let configDir = FileManager.default.homeDirectoryForCurrentUser
 let sessionFile = configDir.appendingPathComponent("session.json")
 let queueFile = configDir.appendingPathComponent("queue.jsonl")
 let lockFile = configDir.appendingPathComponent("lock")
-let manualScrobbleSocketFile = configDir.appendingPathComponent("manual.sock")
+let controlSocketFile = configDir.appendingPathComponent("control.sock")
 
 struct Session: Codable, Sendable {
     let sessionKey: String
@@ -77,8 +77,9 @@ func runningLockPid() -> Int32? {
 }
 
 nonisolated(unsafe) var debugMode = false
-nonisolated(unsafe) var autoExitMinutes: Double? = 4.65
+nonisolated(unsafe) var autoExitMinutes: Double? = 5.0
 nonisolated(unsafe) var useAmPm = false
+nonisolated(unsafe) var noScrobble = false
 
 nonisolated(unsafe) var noMatchCount: Int = 0
 

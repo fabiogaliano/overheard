@@ -4,6 +4,10 @@
 
 # overheard
 
+<p align="center">
+  <img src="overheard.gif" alt="overheard demo" />
+</p>
+
 *passive scrobbler for macOS*
 
 **Auto-scrobble whatever's playing on your Mac.**
@@ -105,10 +109,24 @@ To send an immediate manual scrobble to a running `overheard` instance:
 overheard -a "Artist" -s "Song"
 ```
 
-To love the last track successfully scrobbled by the currently running `overheard` process:
+To love the last song recognized by the running `overheard` process:
 
 ```bash
 overheard -l
+```
+
+### Listen-Only Mode
+
+Start overheard without scrobbling — useful when the audio source already scrobbles and you just want to identify songs and love them:
+
+```bash
+overheard --no-scrobble
+```
+
+You can toggle scrobbling on and off at runtime:
+
+```bash
+overheard --toggle
 ```
 
 ### Debug Mode
@@ -119,18 +137,13 @@ overheard --debug
 
 Surfaces the full pipeline state: audio buffer reception, spectral analysis metrics, recognition attempts, and scrobble decisions.
 
-### Disable Auto-Exit
+### Auto-Exit
 
-By default, overheard exits after ~4.65 minutes of silence. To keep it running indefinitely:
-
-```bash
-overheard --no-auto-exit
-```
-
-Or set a custom silence timeout (in minutes):
+By default, overheard exits after 5 minutes of silence. To adjust or disable:
 
 ```bash
-overheard --auto-exit 10
+overheard --auto-exit 10     # 10 minutes
+overheard --auto-exit off    # never auto-exit
 ```
 
 ## Project Structure

@@ -10,7 +10,8 @@ final class ScrobbleController {
     let controlServer: ControlRequestServer
 
     private var activeSession: TrackSession?
-    private var lastScrobbledTrack: ManualScrobbleRequest?
+    private var lastKnownSong: ManualScrobbleRequest?
+    private var scrobblingEnabled: Bool
     private var recognitionInFlight = false
     private var lastRecognitionTime: ContinuousClock.Instant = .now - .seconds(60)
     private let cooldownInterval: Duration = .seconds(10)
@@ -30,6 +31,7 @@ final class ScrobbleController {
         recognizer = MusicRecognizer()
         queue = ScrobbleQueue()
         controlServer = ControlRequestServer()
+        scrobblingEnabled = !noScrobble
 
         lastFm.sessionKey = session.sessionKey
 
@@ -67,15 +69,14 @@ final class ScrobbleController {
 
     func start() async throws {
         try controlServer.start { [weak self] request in
-            Task { @MainActor [weak self] in
-                await self?.handleControlRequest(request)
-            }
+            guard let self else { return ControlResponse(success: false, message: "Controller unavailable") }
+            return await self.handleControlRequest(request)
         }
         await flushQueue()
         try await capture.start()
         startPeriodicTimer()
         scheduleStartupRecognition()
-        print("Listening for music...")
+        print("Listening for music\(scrobblingEnabled ? "" : " (not scrobbling)")...")
     }
 
     func requestRecognition(reason: RecognitionReason) {
@@ -134,32 +135,53 @@ final class ScrobbleController {
         }
 
         self.activeSession = TrackSession(track: track)
-        self.sendNowPlaying(track)
-        self.scheduleEligibilityTimer()
-    }
 
-    private func handleControlRequest(_ request: ControlRequest) async {
-        switch request {
-        case let .manualScrobble(request):
-            await handleManualScrobbleRequest(request)
-        case .loveLastScrobbledTrack:
-            await loveLastScrobbledTrack()
+        if scrobblingEnabled {
+            self.sendNowPlaying(track)
+            self.scheduleEligibilityTimer()
+        } else {
+            rememberLastKnownSong(artist: track.artist, song: track.title)
+            print("[\(timestamp())] \u{25CB} \(track.artist) - \(track.title)")
         }
     }
 
-    private func handleManualScrobbleRequest(_ request: ManualScrobbleRequest) async {
-        let trimmedArtist = request.artist.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedTrack = request.track.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func handleControlRequest(_ request: ControlRequest) async -> ControlResponse {
+        switch request {
+        case let .manualScrobble(request):
+            return await handleManualScrobbleRequest(request)
+        case .love:
+            return await loveLastSong()
+        case .toggleScrobbling:
+            return toggleScrobbling()
+        }
+    }
 
-        guard !trimmedArtist.isEmpty, !trimmedTrack.isEmpty else {
-            logError("Ignoring invalid manual scrobble request")
-            return
+    private func toggleScrobbling() -> ControlResponse {
+        scrobblingEnabled.toggle()
+        let now = timestamp()
+        if scrobblingEnabled {
+            print("[\(now)] ~ Scrobbling resumed")
+        } else {
+            print("[\(now)] ~ Scrobbling paused")
+        }
+        return ControlResponse(
+            success: true,
+            message: "Scrobbling: \(scrobblingEnabled ? "on" : "off")"
+        )
+    }
+
+    private func handleManualScrobbleRequest(_ request: ManualScrobbleRequest) async -> ControlResponse {
+        let trimmedArtist = request.artist.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSong = request.song.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmedArtist.isEmpty, !trimmedSong.isEmpty else {
+            return ControlResponse(success: false, message: "Artist and song cannot be empty")
         }
 
         let now = timestamp()
         let scrobble = QueuedScrobble(
             artist: trimmedArtist,
-            track: trimmedTrack,
+            track: trimmedSong,
             album: nil,
             duration: nil,
             timestamp: Int(Date().timeIntervalSince1970)
@@ -173,34 +195,38 @@ final class ScrobbleController {
                 duration: scrobble.duration,
                 timestamp: scrobble.timestamp
             )
-            rememberLastScrobbledTrack(artist: scrobble.artist, track: scrobble.track)
+            rememberLastKnownSong(artist: scrobble.artist, song: scrobble.track)
             print("[\(now)] \u{266B} \(scrobble.artist) - \(scrobble.track)")
+            return ControlResponse(success: true, message: "Scrobbled: \(scrobble.artist) - \(scrobble.track)")
         } catch {
             queue.enqueue(scrobble)
             logError("Manual scrobble failed, queued for retry: \(error)")
             await handleAuthError(error)
+            return ControlResponse(success: false, message: "Scrobble failed, queued for retry")
         }
     }
 
-    private func loveLastScrobbledTrack() async {
-        guard let lastScrobbledTrack else {
-            logError("No scrobbled track from this running overheard instance is available to love yet.")
-            return
+    private func loveLastSong() async -> ControlResponse {
+        guard let lastKnownSong else {
+            return ControlResponse(success: false, message: "No song to love yet")
         }
 
         let now = timestamp()
 
         do {
-            try await lastFm.loveTrack(artist: lastScrobbledTrack.artist, track: lastScrobbledTrack.track)
-            print("[\(now)] \u{2665} \(lastScrobbledTrack.artist) - \(lastScrobbledTrack.track)")
+            try await lastFm.loveTrack(artist: lastKnownSong.artist, track: lastKnownSong.song)
+            print("[\(now)] \u{2665} \(lastKnownSong.artist) - \(lastKnownSong.song)")
+            return ControlResponse(success: true, message: "Loved: \(lastKnownSong.artist) - \(lastKnownSong.song)")
         } catch {
             logError("Love failed: \(error)")
             await handleAuthError(error)
+            return ControlResponse(success: false, message: "Love failed: \(error.localizedDescription)")
         }
     }
 
     func scrobbleCurrentTrack() async {
-        guard var session = activeSession,
+        guard scrobblingEnabled,
+              var session = activeSession,
               !session.scrobbled,
               session.isEligible() else {
             return
@@ -227,7 +253,7 @@ final class ScrobbleController {
                 duration: scrobble.duration,
                 timestamp: scrobble.timestamp
             )
-            rememberLastScrobbledTrack(artist: scrobble.artist, track: scrobble.track)
+            rememberLastKnownSong(artist: scrobble.artist, song: scrobble.track)
             print("[\(now)] \u{266B} \(scrobble.artist) - \(scrobble.track)")
         } catch {
             queue.enqueue(scrobble)
@@ -249,7 +275,7 @@ final class ScrobbleController {
             cancelEligibilityTimer()
             await scrobbleCurrentTrack()
             capture.stop()
-            lastScrobbledTrack = nil
+            lastKnownSong = nil
             controlServer.stop()
             clearLock()
         }
@@ -289,7 +315,7 @@ final class ScrobbleController {
                     duration: entry.duration,
                     timestamp: entry.timestamp
                 )
-                rememberLastScrobbledTrack(artist: entry.artist, track: entry.track)
+                rememberLastKnownSong(artist: entry.artist, song: entry.track)
             } catch {
                 await handleAuthError(error)
                 queue.abortFlush(Array(entries[index...]))
@@ -301,8 +327,8 @@ final class ScrobbleController {
         queue.completeFlush()
     }
 
-    private func rememberLastScrobbledTrack(artist: String, track: String) {
-        lastScrobbledTrack = ManualScrobbleRequest(artist: artist, track: track)
+    private func rememberLastKnownSong(artist: String, song: String) {
+        lastKnownSong = ManualScrobbleRequest(artist: artist, song: song)
     }
 
     // MARK: - Startup

@@ -3,12 +3,18 @@ import Foundation
 
 struct ManualScrobbleRequest: Codable, Sendable, Equatable {
     let artist: String
-    let track: String
+    let song: String
 }
 
 enum ControlRequest: Codable, Sendable, Equatable {
     case manualScrobble(ManualScrobbleRequest)
-    case loveLastScrobbledTrack
+    case love
+    case toggleScrobbling
+}
+
+struct ControlResponse: Codable, Sendable {
+    let success: Bool
+    let message: String
 }
 
 enum ControlIPCError: LocalizedError {
@@ -38,11 +44,11 @@ final class ControlRequestServer {
     private var socketFD: Int32 = -1
     private var readSource: DispatchSourceRead?
 
-    init(socketURL: URL = manualScrobbleSocketFile) {
+    init(socketURL: URL = controlSocketFile) {
         self.socketURL = socketURL
     }
 
-    func start(onRequest: @escaping @Sendable (ControlRequest) -> Void) throws {
+    func start(onRequest: @escaping @Sendable (ControlRequest) async -> ControlResponse) throws {
         stop()
         ensureConfigDir()
         try? FileManager.default.removeItem(at: socketURL)
@@ -94,26 +100,35 @@ final class ControlRequestServer {
         try? FileManager.default.removeItem(at: socketURL)
     }
 
-    private func acceptNextConnection(onRequest: @escaping @Sendable (ControlRequest) -> Void) {
+    private func acceptNextConnection(onRequest: @escaping @Sendable (ControlRequest) async -> ControlResponse) {
         let clientFD = accept(socketFD, nil, nil)
         guard clientFD >= 0 else { return }
 
-        let handle = FileHandle(fileDescriptor: clientFD, closeOnDealloc: true)
+        let handle = FileHandle(fileDescriptor: clientFD, closeOnDealloc: false)
         let data = handle.readDataToEndOfFile()
-        try? handle.close()
 
-        guard !data.isEmpty else { return }
+        guard !data.isEmpty else {
+            close(clientFD)
+            return
+        }
 
         do {
             let request = try JSONDecoder().decode(ControlRequest.self, from: data)
-            onRequest(request)
+            Task {
+                let response = await onRequest(request)
+                if let responseData = try? JSONEncoder().encode(response) {
+                    handle.write(responseData)
+                }
+                close(clientFD)
+            }
         } catch {
             logError("Failed to decode control request: \(error.localizedDescription)")
+            close(clientFD)
         }
     }
 }
 
-func sendControlRequest(_ request: ControlRequest, socketURL: URL = manualScrobbleSocketFile) throws {
+func sendControlRequest(_ request: ControlRequest, socketURL: URL = controlSocketFile) throws -> ControlResponse {
     let fd = socket(AF_UNIX, SOCK_STREAM, 0)
     guard fd >= 0 else {
         throw ControlIPCError.socketCreationFailed(posixMessage("Failed to create control client socket"))
@@ -127,12 +142,25 @@ func sendControlRequest(_ request: ControlRequest, socketURL: URL = manualScrobb
     }
 
     let data = try JSONEncoder().encode(request)
-    let result = data.withUnsafeBytes { buffer in
+    let writeResult = data.withUnsafeBytes { buffer in
         write(fd, buffer.baseAddress, buffer.count)
     }
-    guard result == data.count else {
+    guard writeResult == data.count else {
         throw ControlIPCError.writeFailed(posixMessage("Failed to send control request"))
     }
+
+    // Signal done writing so server gets EOF and can process
+    Darwin.shutdown(fd, SHUT_WR)
+
+    // Read response
+    let responseHandle = FileHandle(fileDescriptor: fd, closeOnDealloc: false)
+    let responseData = responseHandle.readDataToEndOfFile()
+
+    guard !responseData.isEmpty else {
+        return ControlResponse(success: true, message: "")
+    }
+
+    return try JSONDecoder().decode(ControlResponse.self, from: responseData)
 }
 
 private func withSocketAddress<T>(
